@@ -604,6 +604,9 @@ namespace MapleLib.Img
                 {
                     string imgPath = Path.Combine(outputPath, EscapeFileName(img.Name));
                     serializer.SerializeImage(img, imgPath);
+                    // Free the parsed property tree immediately — keeping every image parsed
+                    // makes large categories (Map, Mob) exhaust memory on small machines.
+                    img.UnparseImage();
 
                     processedCount++;
                     result.TotalSize += new FileInfo(imgPath).Length;
