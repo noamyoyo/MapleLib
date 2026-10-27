@@ -507,8 +507,9 @@ namespace MapleLib.Img
                 // Get WZ IV for the target encryption (used for WzDirectory and saving)
                 byte[] wzIv = WzTool.GetIvByMapleVersion(encryption);
 
-                // IMG files are always extracted with BMS encryption, so use BMS IV for reading
-                byte[] readIv = WzAESConstant.WZ_BMSCLASSIC;
+                // IMG files are extracted with BMS encryption, but trees written by older extractor builds
+                // (or images saved after an edit) can carry the source key instead. Try each candidate per image.
+                IReadOnlyList<byte[]> readIvs = BuildImgReadIvCandidates(wzIv);
 
                 // Special handling for List.wz files (pre-Big Bang format)
                 // These are stored as JSON during extraction and need to be converted back to List.wz format
@@ -650,8 +651,7 @@ namespace MapleLib.Img
                                     cancellationToken.ThrowIfCancellationRequested();
                                     var imgFileInfo = chunk[index];
 
-                                    // Use BMS IV for reading (IMG files are extracted with BMS encryption)
-                                    var processingResult = ProcessSingleImgFile(imgFileInfo, readIv);
+                                    var processingResult = ProcessSingleImgFile(imgFileInfo, readIvs);
                                     processingResults[index] = processingResult;
 
                                     int currentCount = Interlocked.Increment(ref processedCount);
@@ -751,8 +751,7 @@ namespace MapleLib.Img
                                 cancellationToken.ThrowIfCancellationRequested();
                                 var imgFileInfo = imgFiles[index];
 
-                                // Use BMS IV for reading (IMG files are extracted with BMS encryption)
-                                var processingResult = ProcessSingleImgFile(imgFileInfo, readIv);
+                                var processingResult = ProcessSingleImgFile(imgFileInfo, readIvs);
                                 processingResults[index] = processingResult;
 
                                 int currentCount = Interlocked.Increment(ref processedCount);
@@ -995,8 +994,9 @@ namespace MapleLib.Img
                 // Get WZ IV for the target encryption (used for WzDirectory and saving)
                 byte[] wzIv = WzTool.GetIvByMapleVersion(encryption);
 
-                // IMG files are always extracted with BMS encryption, so use BMS IV for reading
-                byte[] readIv = WzAESConstant.WZ_BMSCLASSIC;
+                // IMG files are extracted with BMS encryption, but trees written by older extractor builds
+                // (or images saved after an edit) can carry the source key instead. Try each candidate per image.
+                IReadOnlyList<byte[]> readIvs = BuildImgReadIvCandidates(wzIv);
 
                 // Separate List category from others (List.wz is always separate)
                 var categoriesList = categories
@@ -1107,8 +1107,7 @@ namespace MapleLib.Img
                                 cancellationToken.ThrowIfCancellationRequested();
                                 var imgFileInfo = imgFiles[index];
 
-                                // Use BMS IV for reading (IMG files are extracted with BMS encryption)
-                                var processingResult = ProcessSingleImgFile(imgFileInfo, readIv);
+                                var processingResult = ProcessSingleImgFile(imgFileInfo, readIvs);
                                 processingResults[index] = processingResult;
 
                                 int currentCount = Interlocked.Increment(ref totalProcessed);
@@ -2137,8 +2136,8 @@ namespace MapleLib.Img
         /// This method is thread-safe and can be called concurrently.
         /// </summary>
         /// <param name="imgFileInfo">Information about the IMG file to process</param>
-        /// <param name="readIv">IV used for reading the IMG file (usually BMS since IMG files are extracted with BMS)</param>
-        private ImgProcessingResult ProcessSingleImgFile(ImgFileInfo imgFileInfo, byte[] readIv)
+        /// <param name="readIvs">Candidate IVs for reading the IMG file, tried in order (BMS first, then the target IV and the common fallbacks)</param>
+        private ImgProcessingResult ProcessSingleImgFile(ImgFileInfo imgFileInfo, IReadOnlyList<byte[]> readIvs)
         {
             var result = new ImgProcessingResult
             {
@@ -2164,45 +2163,61 @@ namespace MapleLib.Img
                 EnsurePayloadSize(imgFileInfo.FilePath);
                 byte[] imgBytes = File.ReadAllBytes(imgFileInfo.FilePath);
 
-                // Create WzImage from the raw bytes
-                using (var memStream = new MemoryStream(imgBytes))
+                // Create WzImage from the raw bytes, trying each candidate IV until one parses
+                WzImage clonedImage = null;
+                bool anyParsed = false;
+                string lastError = null;
+                foreach (byte[] readIv in readIvs)
                 {
-                    var wzReader = new WzBinaryReader(memStream, readIv);
-
-                    var wzImage = new WzImage(imgFileName, wzReader)
+                    try
                     {
-                        BlockSize = imgBytes.Length
-                    };
-                    wzImage.CalculateAndSetImageChecksum(imgBytes);
-                    wzImage.Offset = 0;
-
-                    // Parse the image fully
-                    wzImage.ParseEverything = true;
-                    bool parseSuccess = wzImage.ParseImage(true);
-
-                    if (parseSuccess)
-                    {
-                        // Mark as changed so it will be re-written
-                        wzImage.Changed = true;
-
-                        // Deep clone the image to detach from the reader
-                        WzImage clonedImage = CloneWzImage(wzImage, imgFileName);
-                        if (clonedImage != null)
+                        using (var memStream = new MemoryStream(imgBytes))
                         {
-                            result.Success = true;
-                            result.Image = clonedImage;
-                        }
-                        else
-                        {
-                            result.Success = false;
-                            result.ErrorMessage = $"Failed to clone: {imgFileInfo.RelativePath}";
+                            var wzReader = new WzBinaryReader(memStream, readIv);
+
+                            var wzImage = new WzImage(imgFileName, wzReader)
+                            {
+                                BlockSize = imgBytes.Length
+                            };
+                            wzImage.CalculateAndSetImageChecksum(imgBytes);
+                            wzImage.Offset = 0;
+
+                            // Parse the image fully
+                            wzImage.ParseEverything = true;
+                            if (!wzImage.ParseImage(true))
+                                continue;
+
+                            anyParsed = true;
+
+                            // Mark as changed so it will be re-written
+                            wzImage.Changed = true;
+
+                            // Deep clone the image to detach from the reader
+                            clonedImage = CloneWzImage(wzImage, imgFileName);
+                            break;
                         }
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        result.Success = false;
-                        result.ErrorMessage = $"Failed to parse: {imgFileInfo.RelativePath}";
+                        lastError = ex.Message;
                     }
+                }
+
+                if (clonedImage != null)
+                {
+                    result.Success = true;
+                    result.Image = clonedImage;
+                }
+                else if (anyParsed)
+                {
+                    result.Success = false;
+                    result.ErrorMessage = $"Failed to clone: {imgFileInfo.RelativePath}";
+                }
+                else
+                {
+                    result.Success = false;
+                    result.ErrorMessage = $"Failed to parse: {imgFileInfo.RelativePath}" +
+                        (lastError != null ? $" ({lastError})" : "");
                 }
             }
             catch (Exception ex)
@@ -2213,6 +2228,26 @@ namespace MapleLib.Img
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// IVs to try, in order, when reading an extracted IMG file during packing: BMS (the documented
+        /// IMG-filesystem encryption), the pack target's IV, then the common regional keys.
+        /// </summary>
+        private static IReadOnlyList<byte[]> BuildImgReadIvCandidates(byte[] targetIv)
+        {
+            var candidates = new List<byte[]>();
+            void Add(byte[] iv)
+            {
+                if (iv != null && !candidates.Any(c => c.AsSpan().SequenceEqual(iv)))
+                    candidates.Add(iv);
+            }
+
+            Add(WzAESConstant.WZ_BMSCLASSIC);
+            Add(targetIv);
+            Add(WzTool.GetIvByMapleVersion(WzMapleVersion.GMS));
+            Add(WzTool.GetIvByMapleVersion(WzMapleVersion.EMS));
+            return candidates;
         }
 
         private static WzImage CreateLuaImageFromText(string filePath, string imageName)

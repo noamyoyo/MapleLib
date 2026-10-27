@@ -64,6 +64,19 @@ namespace MapleLib.WzLib.Serializer
             return WzAESConstant.WZ_BMSCLASSIC;
         }
 
+        /// <summary>
+        /// True when an unchanged image is still backed by data encrypted with a different key than the
+        /// output key. WzImage.SaveImage copies the original bytes for unchanged images, which would leave
+        /// the source key in a file that is supposed to use <paramref name="outputIv"/>; such images must be
+        /// re-serialized from their parsed properties instead.
+        /// </summary>
+        private static bool NeedsReencryption(WzImage img, byte[] outputIv)
+        {
+            if (img == null || img.reader == null || img.bIsImageChanged || outputIv == null)
+                return false;
+            return !img.reader.WzKey.Equals(WzKeyGenerator.GenerateWzKey(outputIv));
+        }
+
         public byte[] SerializeImage(WzImage img)
         {
             total = 1; curr = 0;
@@ -72,7 +85,7 @@ namespace MapleLib.WzLib.Serializer
             {
                 using (WzBinaryWriter wzWriter = new WzBinaryWriter(stream, GetOutputIv(img)))
                 {
-                    img.SaveImage(wzWriter);
+                    img.SaveImage(wzWriter, !NeedsReencryption(img, GetOutputIv(img)));
                     byte[] result = stream.ToArray();
 
                     return result;
@@ -109,7 +122,7 @@ namespace MapleLib.WzLib.Serializer
                 else
                 {
                     using var wzWriter = new WzImgFileWriter(stream, iv);
-                    img.SaveImage(wzWriter);
+                    img.SaveImage(wzWriter, !NeedsReencryption(img, iv));
                 }
             }
         }

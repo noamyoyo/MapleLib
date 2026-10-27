@@ -673,7 +673,9 @@ namespace MapleLib.WzLib
             Debug.WriteLine(string.Format("bSaveAs64BitWz: {0}", bSaveAs64BitWz));
             Debug.WriteLine("----------------------------------------");
 
-            string tempFile = Path.GetFileNameWithoutExtension(path) + ".TEMP";
+            // Keep the scratch file next to the output instead of in the process working directory
+            // (which may be read-only, e.g. in a container).
+            string tempFile = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".", Path.GetFileNameWithoutExtension(path) + ".TEMP");
             try
             {
                 File.Create(tempFile).Close();
