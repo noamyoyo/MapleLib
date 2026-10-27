@@ -311,13 +311,33 @@ namespace MapleLib.WzLib.WzProperties
             else
             {
 #if LINUX_BUILD
-                // No ACM frame decompressor on Linux; only the frame headers are needed here.
-                using Mp3FileReaderBase reader = new Mp3FileReaderBase(file, _ => null);
+                // Mp3FileReader needs an ACM frame decompressor, which does not exist on Linux (and
+                // Mp3FileReaderBase throws without one). Only the frame headers are needed here, so read
+                // them directly the way Mp3FileReaderBase does.
+                using (FileStream mp3Stream = File.OpenRead(file))
+                {
+                    Id3v2Tag.ReadTag(mp3Stream);
+                    Mp3Frame frame = Mp3Frame.LoadFromStream(mp3Stream)
+                        ?? throw new InvalidDataException("The file does not contain MP3 frames.");
+                    this.wavFormat = new Mp3WaveFormat(
+                        frame.SampleRate,
+                        frame.ChannelMode == ChannelMode.Mono ? 1 : 2,
+                        frame.FrameLength,
+                        frame.BitRate);
+
+                    double seconds = 0;
+                    do
+                    {
+                        seconds += (double)frame.SampleCount / frame.SampleRate;
+                    }
+                    while ((frame = Mp3Frame.LoadFromStream(mp3Stream)) != null);
+                    this.len_ms = (int)(seconds * 1000d);
+                }
 #else
                 using Mp3FileReader reader = new Mp3FileReader(file);
-#endif
                 this.wavFormat = reader.Mp3WaveFormat;
                 this.len_ms = (int)((double)reader.Length * 1000d / (double)reader.WaveFormat.AverageBytesPerSecond);
+#endif
                 this.fileBytes = File.ReadAllBytes(file);
             }
 
