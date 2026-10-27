@@ -49,6 +49,9 @@ namespace MapleLib.Img
         private readonly ConcurrentDictionary<string, VirtualWzDirectory> _directoryCache = new();
         private readonly ConcurrentDictionary<string, List<string>> _categoryIndex = new();
         private readonly ConcurrentDictionary<string, byte> _indexedCategories = new();
+        // Maps any-case category name to the real directory name on disk. Needed on case-sensitive
+        // file systems (Linux), where the index keys are lower-cased but the directory is e.g. "String".
+        private readonly ConcurrentDictionary<string, string> _categoryDirectoryNames = new(StringComparer.OrdinalIgnoreCase);
 
         // Default cache settings
         private const int DEFAULT_MAX_CACHE_ITEMS = 500;
@@ -235,6 +238,7 @@ namespace MapleLib.Img
 
                 string categoryKey = categoryName.ToLowerInvariant();
                 _categoryIndex.TryAdd(categoryKey, new List<string>());
+                _categoryDirectoryNames.TryAdd(categoryName, categoryName);
 
                 // Preserve manifest counts without touching every IMG file.
                 if (!_versionInfo.Categories.ContainsKey(categoryName))
@@ -556,7 +560,7 @@ namespace MapleLib.Img
         {
             string fullPath = GetContainedImagePath(category, relativePath);
 
-            string categoryPath = Path.Combine(_versionPath, category);
+            string categoryPath = Path.Combine(_versionPath, ResolveCategoryName(category));
             bool categoryDirExists = Directory.Exists(categoryPath);
             bool fileExists = File.Exists(fullPath);
 
@@ -713,6 +717,16 @@ namespace MapleLib.Img
             return FileReplacement.GetBackupFilePath(backupFilePath);
         }
 
+        /// <summary>
+        /// Returns the on-disk directory name for a category given in any case; unknown names are returned unchanged.
+        /// </summary>
+        private string ResolveCategoryName(string category)
+        {
+            if (!string.IsNullOrWhiteSpace(category) && _categoryDirectoryNames.TryGetValue(category, out string actual))
+                return actual;
+            return category;
+        }
+
         private string GetContainedImagePath(string category, string relativePath)
         {
             if (string.IsNullOrWhiteSpace(category))
@@ -720,7 +734,7 @@ namespace MapleLib.Img
             if (string.IsNullOrWhiteSpace(relativePath))
                 throw new ArgumentException("Relative path is required.", nameof(relativePath));
 
-            string fullPath = Path.Combine(_versionPath, category, relativePath);
+            string fullPath = Path.Combine(_versionPath, ResolveCategoryName(category), relativePath);
             if (!fullPath.EndsWith(".img", StringComparison.OrdinalIgnoreCase))
                 fullPath += ".img";
 
@@ -740,7 +754,7 @@ namespace MapleLib.Img
                 throw new ArgumentException("Category is required.", nameof(category));
 
             string root = _versionPath;
-            string fullPath = Path.GetFullPath(Path.Combine(root, category));
+            string fullPath = Path.GetFullPath(Path.Combine(root, ResolveCategoryName(category)));
             string rootWithSeparator = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
             if (!fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException($"Category path escapes the version directory: {fullPath}");
@@ -1208,7 +1222,7 @@ namespace MapleLib.Img
             // Watch each category directory
             foreach (var category in _categoryIndex.Keys)
             {
-                string categoryPath = Path.Combine(_versionPath, category);
+                string categoryPath = Path.Combine(_versionPath, ResolveCategoryName(category));
                 if (Directory.Exists(categoryPath))
                 {
                     _watcherService.WatchPath(categoryPath, WatchType.Category, category);
