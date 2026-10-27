@@ -651,7 +651,7 @@ namespace MapleLib.Img
                                     cancellationToken.ThrowIfCancellationRequested();
                                     var imgFileInfo = chunk[index];
 
-                                    var processingResult = ProcessSingleImgFile(imgFileInfo, readIvs);
+                                    var processingResult = ProcessSingleImgFile(imgFileInfo, readIvs, wzIv);
                                     processingResults[index] = processingResult;
 
                                     int currentCount = Interlocked.Increment(ref processedCount);
@@ -751,7 +751,7 @@ namespace MapleLib.Img
                                 cancellationToken.ThrowIfCancellationRequested();
                                 var imgFileInfo = imgFiles[index];
 
-                                var processingResult = ProcessSingleImgFile(imgFileInfo, readIvs);
+                                var processingResult = ProcessSingleImgFile(imgFileInfo, readIvs, wzIv);
                                 processingResults[index] = processingResult;
 
                                 int currentCount = Interlocked.Increment(ref processedCount);
@@ -1107,7 +1107,7 @@ namespace MapleLib.Img
                                 cancellationToken.ThrowIfCancellationRequested();
                                 var imgFileInfo = imgFiles[index];
 
-                                var processingResult = ProcessSingleImgFile(imgFileInfo, readIvs);
+                                var processingResult = ProcessSingleImgFile(imgFileInfo, readIvs, wzIv);
                                 processingResults[index] = processingResult;
 
                                 int currentCount = Interlocked.Increment(ref totalProcessed);
@@ -2137,7 +2137,7 @@ namespace MapleLib.Img
         /// </summary>
         /// <param name="imgFileInfo">Information about the IMG file to process</param>
         /// <param name="readIvs">Candidate IVs for reading the IMG file, tried in order (BMS first, then the target IV and the common fallbacks)</param>
-        private ImgProcessingResult ProcessSingleImgFile(ImgFileInfo imgFileInfo, IReadOnlyList<byte[]> readIvs)
+        private ImgProcessingResult ProcessSingleImgFile(ImgFileInfo imgFileInfo, IReadOnlyList<byte[]> readIvs, byte[] preferredIv = null)
         {
             var result = new ImgProcessingResult
             {
@@ -2162,6 +2162,10 @@ namespace MapleLib.Img
                 // WZ parser can apply its payload limits.
                 EnsurePayloadSize(imgFileInfo.FilePath);
                 byte[] imgBytes = File.ReadAllBytes(imgFileInfo.FilePath);
+
+                // Legacy binary Lua images were written with the pack target key, so try that first.
+                if (preferredIv != null && IsLegacyLuaBinaryFile(imgFileInfo.FilePath))
+                    readIvs = PreferIv(readIvs, preferredIv);
 
                 // Create WzImage from the raw bytes, trying each candidate IV until one parses
                 WzImage clonedImage = null;
@@ -2248,6 +2252,17 @@ namespace MapleLib.Img
             Add(WzTool.GetIvByMapleVersion(WzMapleVersion.GMS));
             Add(WzTool.GetIvByMapleVersion(WzMapleVersion.EMS));
             return candidates;
+        }
+
+        private static IReadOnlyList<byte[]> PreferIv(IReadOnlyList<byte[]> ivs, byte[] preferred)
+        {
+            var ordered = new List<byte[]> { preferred };
+            foreach (byte[] iv in ivs)
+            {
+                if (!iv.AsSpan().SequenceEqual(preferred))
+                    ordered.Add(iv);
+            }
+            return ordered;
         }
 
         private static WzImage CreateLuaImageFromText(string filePath, string imageName)
