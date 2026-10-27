@@ -3,6 +3,7 @@ using System.Buffers;
 using System.IO;
 using System.Text.RegularExpressions;
 using System;
+using MapleLib.Helpers;
 using MapleLib.WzLib.Util;
 using MapleLib.WzLib.WzProperties;
 using System.Threading.Tasks;
@@ -673,20 +674,25 @@ namespace MapleLib.WzLib
             Debug.WriteLine(string.Format("bSaveAs64BitWz: {0}", bSaveAs64BitWz));
             Debug.WriteLine("----------------------------------------");
 
-            // Keep the scratch file next to the output instead of in the process working directory
-            // (which may be read-only, e.g. in a container).
-            string tempFile = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".", Path.GetFileNameWithoutExtension(path) + ".TEMP");
+            // Both the scratch file and the output are written to new files with random names next to the output
+            // (NoFollowFile: FileMode.CreateNew, then a rename onto the output), never to a predictable name and never
+            // through a symbolic link at the output path. The scratch file stays next to the output instead of in the
+            // process working directory (which may be read-only, e.g. in a container).
+            string fullPath = Path.GetFullPath(path);
+            NoFollowFile.RefuseSymbolicLink(fullPath);
+            FileStream scratch = NoFollowFile.CreateTemp(fullPath, out string tempFile);
+            string outputTemp = null;
             try
             {
-                File.Create(tempFile).Close();
-                using (FileStream fs = new FileStream(tempFile, FileMode.Append, FileAccess.Write))
+                using (scratch)
                 {
-                    wzDir.GenerateDataFile(bIsWzIvSimilar ? null : WzIv, bIsWzUserKeyDefault, fs);
+                    wzDir.GenerateDataFile(bIsWzIvSimilar ? null : WzIv, bIsWzUserKeyDefault, scratch);
                 }
 
                 WzTool.StringCache.Clear();
 
-                using (WzBinaryWriter wzWriter = new WzBinaryWriter(File.Create(path), WzIv))
+                FileStream output = NoFollowFile.CreateTemp(fullPath, out outputTemp);
+                using (WzBinaryWriter wzWriter = new WzBinaryWriter(output, WzIv))
                 {
                     wzWriter.Hash = versionHash;
 
@@ -718,11 +724,18 @@ namespace MapleLib.WzLib
                     }
                     wzWriter.StringCache.Clear();
                 }
+
+                // The output replaces the target only now, complete.
+                NoFollowFile.Commit(outputTemp, fullPath);
+                outputTemp = null;
             }
             finally
             {
-                if (File.Exists(tempFile))
-                    File.Delete(tempFile);
+                if (outputTemp != null)
+                {
+                    try { File.Delete(outputTemp); } catch { }
+                }
+                try { File.Delete(tempFile); } catch { }
             }
         }
 

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System;
+using MapleLib.Helpers;
 using System.Buffers;
 using System.Runtime.InteropServices;
 using MapleLib.WzLib.Util;
@@ -96,7 +97,24 @@ namespace MapleLib.WzLib
 
 		public static void SaveToDisk(string path, byte[] WzIv, List<string> listEntries)
 		{
-            using WzBinaryWriter wzWriter = new WzBinaryWriter(File.Create(path), WzIv);
+            // Written to a new file next to the target and renamed onto it: a symbolic link at the target is refused.
+            NoFollowFile.RefuseSymbolicLink(path);
+            FileStream outputFile = NoFollowFile.CreateTemp(path, out string outputTemp);
+            try
+            {
+                WriteEntries(outputFile, WzIv, listEntries);
+                NoFollowFile.Commit(outputTemp, path);
+            }
+            catch
+            {
+                try { File.Delete(outputTemp); } catch { }
+                throw;
+            }
+        }
+
+        private static void WriteEntries(FileStream outputFile, byte[] WzIv, List<string> listEntries)
+        {
+            using WzBinaryWriter wzWriter = new WzBinaryWriter(outputFile, WzIv);
             // BaseStream flushes the writer; capture it before buffering entries.
             Stream output = wzWriter.BaseStream;
 

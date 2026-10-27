@@ -4,6 +4,7 @@ using MapleLib.WzLib.Util;
 using MapleLib.WzLib.WzProperties;
 using MapleLib;
 using System;
+using MapleLib.Helpers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -645,7 +646,7 @@ namespace MapleLib.Img
 
                     // Create .ini file with correct last index
                     string iniFilePath = Path.Combine(categoryOutputPath, $"{category}.ini");
-                    File.WriteAllText(iniFilePath, $"LastWzIndex|{lastWzIndex}");
+                    NoFollowFile.WriteAllText(iniFilePath, $"LastWzIndex|{lastWzIndex}");
 
                     int totalCount = allImgFiles.Count;
                     int processedCount = 0;
@@ -2738,7 +2739,7 @@ namespace MapleLib.Img
             var content = new StringBuilder();
             content.AppendLine($"LastWzIndex|{maxIndex}");
 
-            File.WriteAllText(iniPath, content.ToString());
+            NoFollowFile.WriteAllText(iniPath, content.ToString());
             Debug.WriteLine($"[Canvas] Created index file: {iniPath}");
         }
         #endregion
