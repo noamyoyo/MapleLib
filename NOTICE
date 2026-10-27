@@ -1,0 +1,24 @@
+MapleLib, Linux fork (branch linux-slim)
+
+This repository is a modified copy of third-party software. It is not the upstream project and has not been
+reviewed or endorsed by the upstream authors.
+
+Upstream: https://github.com/lastbattle/MapleLib, taken at commit 22e32d13.
+Licence: GNU General Public License, version 3, as found in the file LICENSE in this repository. The README.md of
+the upstream project describes the project as "MIT License - See LICENSE file for details", which does not match
+that file. This statement describes what the files say and is not legal advice.
+
+The original copyright notices and licence files have not been changed or removed. Other bundled components
+(for example spine-runtimes-2.1.25, Spine Runtimes Software License, Esoteric Software) keep their own licences;
+check their files.
+
+Modifications made in this fork (GPLv3, section 5a: the work is marked as modified)
+  - Output files (WZ files, IMG files, lists, manifests, indexes) are written without following symbolic links:
+    see MapleLib/Helpers/NoFollowFile.cs, and the packer, extractor and ImgFileSystemManager.
+  - Scratch files are written next to the output with random names instead of the working directory.
+  - Image encoding and decoding work on Linux (raw pixel API, SkiaSharp) without System.Drawing.
+  - List.json is written with the real ListWzJsonFormat type (it threw InvalidCastException before).
+  - Further changes for running inside a container are visible in the git history:
+    git log 22e32d13..HEAD
+The server that uses this library, with a longer list of changes, is https://github.com/noamyoyo/WzImg-MCP-Server
+(branch linux-slim), see README-LINUX.md there.
