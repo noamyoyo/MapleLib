@@ -143,7 +143,14 @@ namespace MapleLib.Helpers
         /// <param name="bmp">The target Bitmap to write decompressed data to</param>
         /// <param name="bmpData">The locked BitmapData for direct memory access</param>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public unsafe static void DecompressImage_PixelDataBgra4444(Span<byte> rawData, int width, int height, Bitmap bmp, BitmapData bmpData)
+        public static void DecompressImage_PixelDataBgra4444(Span<byte> rawData, int width, int height, Bitmap bmp, BitmapData bmpData)
+            => DecompressImage_PixelDataBgra4444(rawData, width, height, bmpData);
+
+        /// <summary>
+        /// Same as the overload with a <see cref="Bitmap"/>, for callers that only have a <see cref="BitmapData"/>
+        /// (the bitmap argument was never used).
+        /// </summary>
+        public unsafe static void DecompressImage_PixelDataBgra4444(Span<byte> rawData, int width, int height, BitmapData bmpData)
         {
             if (width <= 0 || height <= 0)
                 throw new ArgumentOutOfRangeException(nameof(width), "Image dimensions must be positive.");
@@ -373,10 +380,18 @@ namespace MapleLib.Helpers
 
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static unsafe void DecompressImage_PixelDataForm517(byte[] rawData, int width, int height, Bitmap bmp, BitmapData bmpData)
+        public static void DecompressImage_PixelDataForm517(byte[] rawData, int width, int height, Bitmap bmp, BitmapData bmpData)
+        {
+            ArgumentNullException.ThrowIfNull(bmp);
+            DecompressImage_PixelDataForm517(rawData, width, height, bmpData);
+        }
+
+        /// <summary>
+        /// Decodes Format517 (one RGB565 value per 16x16 block) into a 16 bits per pixel buffer.
+        /// </summary>
+        public static unsafe void DecompressImage_PixelDataForm517(byte[] rawData, int width, int height, BitmapData bmpData)
         {
             ArgumentNullException.ThrowIfNull(rawData);
-            ArgumentNullException.ThrowIfNull(bmp);
             if (width <= 0 || height <= 0)
                 throw new ArgumentException("Width and height must be positive.");
 
@@ -628,6 +643,45 @@ namespace MapleLib.Helpers
             pixelData[offset + 3] = alpha;
         }
 
+        /// <summary>
+        /// Expands little-endian ARGB1555 pixels (rows tightly packed) to BGRA32. A 5-bit channel c becomes
+        /// (c &lt;&lt; 3) | (c &gt;&gt; 2); the alpha bit becomes 0 or 255. This is the conversion GDI+ applies when a
+        /// Format16bppArgb1555 bitmap is read as Format32bppArgb.
+        /// </summary>
+        internal static void ExpandArgb1555ToBgra32(byte[] source, byte[] destination, int pixelCount)
+        {
+            if (source.Length < checked(pixelCount * 2) || destination.Length < checked(pixelCount * 4))
+                throw new ArgumentException("Pixel buffers are shorter than the pixel count requires.");
+            for (int i = 0; i < pixelCount; i++)
+            {
+                int v = source[i * 2] | (source[i * 2 + 1] << 8);
+                int b = v & 0x1F, g = (v >> 5) & 0x1F, r = (v >> 10) & 0x1F;
+                destination[i * 4] = (byte)((b << 3) | (b >> 2));
+                destination[i * 4 + 1] = (byte)((g << 3) | (g >> 2));
+                destination[i * 4 + 2] = (byte)((r << 3) | (r >> 2));
+                destination[i * 4 + 3] = (v & 0x8000) != 0 ? (byte)255 : (byte)0;
+            }
+        }
+
+        /// <summary>
+        /// Expands little-endian RGB565 pixels (rows tightly packed) to opaque BGRA32, with the same channel
+        /// expansion as <see cref="RGB565ToColor(ushort)"/>.
+        /// </summary>
+        internal static void ExpandRgb565ToBgra32(byte[] source, byte[] destination, int pixelCount)
+        {
+            if (source.Length < checked(pixelCount * 2) || destination.Length < checked(pixelCount * 4))
+                throw new ArgumentException("Pixel buffers are shorter than the pixel count requires.");
+            for (int i = 0; i < pixelCount; i++)
+            {
+                int v = source[i * 2] | (source[i * 2 + 1] << 8);
+                int b = v & 0x1F, g = (v >> 5) & 0x3F, r = (v >> 11) & 0x1F;
+                destination[i * 4] = (byte)((b << 3) | (b >> 2));
+                destination[i * 4 + 1] = (byte)((g << 2) | (g >> 4));
+                destination[i * 4 + 2] = (byte)((r << 3) | (r >> 2));
+                destination[i * 4 + 3] = 255;
+            }
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void CopyBmpDataWithStride(byte[] source, int stride, BitmapData bmpData)
         {
@@ -753,6 +807,16 @@ namespace MapleLib.Helpers
         /// <param name="format">The target surface format</param>
         /// <returns>Tuple of WzPngFormat and compressed byte array</returns>
         public static (WzPngFormat, byte[]) CompressImageToPngFormat(Bitmap bmp, SurfaceFormat format)
+            => CompressImageToPngFormat(new BgraSurface(bmp), format);
+
+        /// <summary>
+        /// Compresses straight-alpha BGRA32 pixels (rows tightly packed, stride = width * 4) to the selected SurfaceFormat.
+        /// Needs no GDI+; this is the entry point of the Linux build.
+        /// </summary>
+        public static (WzPngFormat, byte[]) CompressImageToPngFormat(byte[] bgra, int width, int height, SurfaceFormat format)
+            => CompressImageToPngFormat(new BgraSurface(bgra, width, height), format);
+
+        internal static (WzPngFormat, byte[]) CompressImageToPngFormat(BgraSurface bmp, SurfaceFormat format)
         {
             // For DXT3, we need to detect if it's a grayscale image to choose between Format3 and Format1026
             bool isGrayscale = false;
@@ -771,6 +835,9 @@ namespace MapleLib.Helpers
         /// <param name="isGrayscale">Whether the image is grayscale (affects DXT3 format selection)</param>
         /// <returns>Tuple of WzPngFormat and compressed byte array</returns>
         public static (WzPngFormat, byte[]) CompressImageToPngFormat(Bitmap bmp, SurfaceFormat format, bool isGrayscale)
+            => CompressImageToPngFormat(new BgraSurface(bmp), format, isGrayscale);
+
+        internal static (WzPngFormat, byte[]) CompressImageToPngFormat(BgraSurface bmp, SurfaceFormat format, bool isGrayscale)
         {
             byte[] retPixelData;
             WzPngFormat retFormat;
@@ -790,7 +857,7 @@ namespace MapleLib.Helpers
                 case SurfaceFormat.Bgr565:
                     // Check if we can use the ultra-compressed 517 format (16x16 blocks)
                     // This is a heuristic; usually used for specific background types
-                    if (bmp.Width % 16 == 0 && bmp.Height % 16 == 0)
+                    if (bmp.Width % 16 == 0 && bmp.Height % 16 == 0 && IsConstantIn16x16Blocks(bmp))
                     {
                         retPixelData = GetPixelDataFormat517(bmp);
                         retFormat = WzPngFormat.Format517;
@@ -827,15 +894,52 @@ namespace MapleLib.Helpers
         }
 
         /// <summary>
+        /// True when every 16x16 block holds a single colour after RGB565 quantisation. Format517 stores only one
+        /// RGB565 value per 16x16 block, so it is only lossless for such images; any other image must use Format513.
+        /// </summary>
+        private static bool IsConstantIn16x16Blocks(BgraSurface bmp)
+        {
+            BitmapData bmpData = bmp.LockBits();
+            try
+            {
+                unsafe
+                {
+                    byte* scan0 = (byte*)bmpData.Scan0;
+                    for (int by = 0; by < bmp.Height; by += 16)
+                    {
+                        for (int bx = 0; bx < bmp.Width; bx += 16)
+                        {
+                            ushort expected = PackBgr565(*(uint*)(scan0 + by * bmpData.Stride + bx * 4));
+                            for (int y = by; y < by + 16; y++)
+                            {
+                                byte* row = scan0 + y * bmpData.Stride;
+                                for (int x = bx; x < bx + 16; x++)
+                                {
+                                    if (PackBgr565(*(uint*)(row + x * 4)) != expected)
+                                        return false;
+                                }
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
+            finally
+            {
+                bmp.UnlockBits(bmpData);
+            }
+        }
+
+        /// <summary>
         /// Checks if the bitmap is a grayscale image (R ≈ G ≈ B for all pixels).
         /// Used to determine Format3 vs Format1026 for DXT3 compression.
         /// </summary>
         /// <param name="bmp">The bitmap to check</param>
         /// <returns>True if the image is grayscale</returns>
-        private static bool IsGrayscaleBitmap(Bitmap bmp)
+        private static bool IsGrayscaleBitmap(BgraSurface bmp)
         {
             const int tolerance = 8;
-            BitmapData bmpData = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            BitmapData bmpData = bmp.LockBits();
             try
             {
                 unsafe
@@ -872,9 +976,9 @@ namespace MapleLib.Helpers
         /// </summary>
         /// <param name="bmp"></param>
         /// <returns></returns>
-        private static byte[] GetPixelDataFormat1(Bitmap bmp)
+        private static byte[] GetPixelDataFormat1(BgraSurface bmp)
         {
-            BitmapData bmpData = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            BitmapData bmpData = bmp.LockBits();
             try
             {
                 byte[] buf = new byte[bmp.Width * bmp.Height * 2];
@@ -928,9 +1032,9 @@ namespace MapleLib.Helpers
         }
 
 
-        private static byte[] GetPixelDataFormat2(Bitmap bmp)
+        private static byte[] GetPixelDataFormat2(BgraSurface bmp)
         {
-            BitmapData bmpData = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            BitmapData bmpData = bmp.LockBits();
             try
             {
                 int length = bmp.Width * bmp.Height * 4;
@@ -955,9 +1059,9 @@ namespace MapleLib.Helpers
             }
         }
 
-        private static byte[] GetPixelDataFormat257(Bitmap bmp)
+        private static byte[] GetPixelDataFormat257(BgraSurface bmp)
         {
-            BitmapData bmpData = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            BitmapData bmpData = bmp.LockBits();
             try
             {
                 byte[] buf = new byte[bmp.Width * bmp.Height * 2];
@@ -1012,9 +1116,9 @@ namespace MapleLib.Helpers
             }
         }
 
-        private static byte[] GetPixelDataFormat513(Bitmap bmp)
+        private static byte[] GetPixelDataFormat513(BgraSurface bmp)
         {
-            BitmapData bmpData = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            BitmapData bmpData = bmp.LockBits();
             try
             {
                 byte[] buf = new byte[bmp.Width * bmp.Height * 2];
@@ -1068,14 +1172,14 @@ namespace MapleLib.Helpers
             }
         }
 
-        private static byte[] GetPixelDataFormat517(Bitmap bmp)
+        private static byte[] GetPixelDataFormat517(BgraSurface bmp)
         {
             int blockSize = 16;
             int blockCountX = (bmp.Width + blockSize - 1) / blockSize;
             int blockCountY = (bmp.Height + blockSize - 1) / blockSize;
             byte[] buf = new byte[blockCountX * blockCountY * 2];
 
-            BitmapData bmpData = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            BitmapData bmpData = bmp.LockBits();
             try
             {
                 int index = 0;
@@ -1127,11 +1231,11 @@ namespace MapleLib.Helpers
         /// </summary>
         /// <param name="bmp"></param>
         /// <returns></returns>
-        private static byte[] CompressDXT3(Bitmap bmp)
+        private static byte[] CompressDXT3(BgraSurface bmp)
         {
             if (bmp.Width % 4 != 0 || bmp.Height % 4 != 0)
                 throw new ArgumentException("DXT3 compression requires width and height to be multiples of 4.");
-            BitmapData bmpData = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            BitmapData bmpData = bmp.LockBits();
             try
             {
                 int blockCountX = bmp.Width / 4;
@@ -1199,11 +1303,11 @@ namespace MapleLib.Helpers
         /// <param name="bmp">Source bitmap (Format32bppArgb)</param>
         /// <returns>DXT5 compressed byte array</returns>
         /// <exception cref="ArgumentException">Thrown if width or height is not a multiple of 4</exception>
-        private static byte[] GetPixelDataFormat2050(Bitmap bmp)
+        private static byte[] GetPixelDataFormat2050(BgraSurface bmp)
         {
             if (bmp.Width % 4 != 0 || bmp.Height % 4 != 0)
                 throw new ArgumentException("DXT5 compression requires width and height to be multiples of 4.");
-            BitmapData bmpData = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            BitmapData bmpData = bmp.LockBits();
             try
             {
                 int blockCountX = bmp.Width / 4;
