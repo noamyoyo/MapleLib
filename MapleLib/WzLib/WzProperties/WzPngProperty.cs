@@ -1080,8 +1080,11 @@ namespace MapleLib.WzLib.WzProperties
         /// </summary>
         /// <param name="bgra">width * height * 4 bytes. Not modified.</param>
         /// <param name="forceFormat">Optional target surface format (for example Bgra32 to keep every channel exact).</param>
+        /// <param name="dxt3Grayscale">Only used when the surface format is Dxt3: true stores Format3 (DXT3 "grayscale"), false stores
+        /// Format1026, whatever the pixels are. Null (the default) lets the encoder decide from the pixel content. Both formats
+        /// are decoded the same way; this keeps the exact format tag of a canvas that is replaced in place.</param>
         /// <exception cref="ArgumentException">The buffer does not match the dimensions, or the dimensions exceed the limits.</exception>
-        public void SetPixelsBgra32(byte[] bgra, int pixelWidth, int pixelHeight, SurfaceFormat? forceFormat = null)
+        public void SetPixelsBgra32(byte[] bgra, int pixelWidth, int pixelHeight, SurfaceFormat? forceFormat = null, bool? dxt3Grayscale = null)
         {
             ArgumentNullException.ThrowIfNull(bgra);
             if (pixelWidth <= 0 || pixelHeight <= 0)
@@ -1102,7 +1105,9 @@ namespace MapleLib.WzLib.WzProperties
                 }
 
                 SurfaceFormat surface = forceFormat ?? ImageFormatDetector.DetermineTextureFormat(bgra, pixelWidth, pixelHeight);
-                (WzPngFormat pngFormat, byte[] encoded) = PngUtility.CompressImageToPngFormat(bgra, pixelWidth, pixelHeight, surface);
+                (WzPngFormat pngFormat, byte[] encoded) = surface == SurfaceFormat.Dxt3 && dxt3Grayscale.HasValue
+                    ? PngUtility.CompressImageToPngFormat(new BgraSurface(bgra, pixelWidth, pixelHeight), surface, dxt3Grayscale.Value)
+                    : PngUtility.CompressImageToPngFormat(bgra, pixelWidth, pixelHeight, surface);
 
                 width = pixelWidth;
                 height = pixelHeight;
