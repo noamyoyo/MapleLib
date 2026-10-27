@@ -1,3 +1,4 @@
+using MapleLib.Helpers;
 using MapleLib.WzLib;
 using System;
 using System.Collections.Generic;
@@ -385,7 +386,7 @@ namespace MapleLib.Img
             string rootWithSeparator = Path.EndsInDirectorySeparator(root)
                 ? root
                 : root + Path.DirectorySeparatorChar;
-            if (!fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+            if (!fullPath.StartsWith(rootWithSeparator, NoFollowFile.PathComparison))
                 throw new InvalidOperationException($"Image path escapes the category directory: {fullPath}");
             return fullPath;
         }

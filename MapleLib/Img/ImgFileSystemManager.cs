@@ -775,7 +775,7 @@ namespace MapleLib.Img
             string categoryWithSeparator = Path.EndsInDirectorySeparator(categoryPath)
                 ? categoryPath
                 : categoryPath + Path.DirectorySeparatorChar;
-            if (!string.Equals(fullPath, categoryPath, StringComparison.OrdinalIgnoreCase) &&
+            if (!string.Equals(fullPath, categoryPath, NoFollowFile.PathComparison) &&
                 !fullPath.StartsWith(categoryWithSeparator, NoFollowFile.PathComparison))
                 throw new InvalidOperationException($"Directory path escapes the category: {fullPath}");
             if (HaCreatorPaths.ContainsBackupsDirectory(fullPath))
