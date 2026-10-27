@@ -206,6 +206,29 @@ namespace MapleLib.Img
         }
 
         /// <summary>
+        /// True when <paramref name="category"/> is one plain directory name: no separator, no "." or "..",
+        /// no drive prefix or rooted path, no control character. Categories become output file and directory names.
+        /// </summary>
+        internal static bool IsPlainCategoryName(string category)
+        {
+            if (string.IsNullOrWhiteSpace(category) || category == "." || category == ".." ||
+                Path.IsPathRooted(category) || category.Contains(".."))
+            {
+                return false;
+            }
+
+            foreach (char ch in category)
+            {
+                if (ch == '/' || ch == '\\' || ch == ':' || char.IsControl(ch))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
         /// Resolves a caller/manifest supplied path below a trusted root.  A
         /// category or case-map entry must never be able to address a sibling
         /// directory via rooted or ".." segments.
@@ -466,6 +489,16 @@ namespace MapleLib.Img
             {
                 result.Success = false;
                 result.Errors.Add($"Category '{category}' is reserved for backups and cannot be packed.");
+                result.EndTime = DateTime.Now;
+                return result;
+            }
+
+            // The category name also becomes part of the OUTPUT paths ({category}.wz, Data/{category}), which
+            // TryGetContainedPath below does not constrain: only a plain single name is allowed.
+            if (!IsPlainCategoryName(category))
+            {
+                result.Success = false;
+                result.Errors.Add($"Category name is not a plain directory name: {category}");
                 result.EndTime = DateTime.Now;
                 return result;
             }
