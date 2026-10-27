@@ -203,12 +203,25 @@ namespace MapleLib.WzLib.WzProperties
                 {
                     if (value != listWzUsed)
                     {
-                        listWzUsed = value;
 #if LINUX_BUILD
-                        byte[] pixels = GetPixelsBgra32(out int pixelWidth, out int pixelHeight);
-                        if (pixels != null)
-                            SetPixelsBgra32(pixels, pixelWidth, pixelHeight);
+                        // Decoding resets listWzUsed from the zlib header of the stored bytes, so remember the requested
+                        // value, decode, and store the same encoded pixels again in the requested layout. The pixel
+                        // format and the pixels themselves are not touched (no re-encoding).
+                        bool previous = listWzUsed;
+                        try
+                        {
+                            byte[] encodedPixels = width > 0 && height > 0 ? GetRawImage(false) : null; // nothing to convert without pixels
+                            listWzUsed = value;
+                            if (encodedPixels != null)
+                                StoreCompressedPixels(encodedPixels);
+                        }
+                        catch
+                        {
+                            listWzUsed = previous;
+                            throw;
+                        }
 #else
+                        listWzUsed = value;
                         CompressPng(GetImage(false));
 #endif
                     }
