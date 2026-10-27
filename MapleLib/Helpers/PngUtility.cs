@@ -48,25 +48,29 @@ namespace MapleLib.Helpers
             return table;
         }
 
+        /// <summary>
+        /// Reduces an 8 bit channel to 5 bits by rounding to the nearest value, round(value * 31 / 255).
+        /// The decoders expand by bit replication ((c << 3) | (c >> 2)), and rounding to nearest is the inverse of
+        /// that expansion: decoding a 5 bit value and encoding it again returns the same value. (The earlier
+        /// floor-style quantiser turned 1 into 8 and then back into 0, so every edit cycle darkened the image.)
+        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static uint QuantizeTo5(uint value)
-        {
-            uint scaled = value * 31 + 1;
-            return (scaled + (scaled >> 8)) >> 8;
-        }
+        private static uint QuantizeTo5(uint value) => DivideBy255(value * 31 + 127);
 
+        /// <summary>Reduces an 8 bit channel to 6 bits by rounding to the nearest value, round(value * 63 / 255).</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static uint QuantizeTo6(uint value)
-        {
-            uint scaled = value * 63 + 1;
-            return (scaled + (scaled >> 8)) >> 8;
-        }
+        private static uint QuantizeTo6(uint value) => DivideBy255(value * 63 + 127);
 
+        /// <summary>Exact integer division by 255 for 0 &lt;= x &lt; 65535.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static uint DivideBy255(uint x) => (x + 1 + (x >> 8)) >> 8;
+
+        /// <summary>SIMD version of QuantizeTo5 / QuantizeTo6 (same arithmetic); <paramref name="one"/> is a vector of 1s.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static Vector128<uint> QuantizeVector(Vector128<uint> value, Vector128<uint> multiplier, Vector128<uint> one)
         {
-            Vector128<uint> scaled = Sse2.Add(Sse41.MultiplyLow(value.AsInt32(), multiplier.AsInt32()).AsUInt32(), one);
-            return Sse2.ShiftRightLogical(Sse2.Add(scaled, Sse2.ShiftRightLogical(scaled, 8)), 8);
+            Vector128<uint> x = Sse2.Add(Sse41.MultiplyLow(value.AsInt32(), multiplier.AsInt32()).AsUInt32(), Vector128.Create(127u));
+            return Sse2.ShiftRightLogical(Sse2.Add(Sse2.Add(x, one), Sse2.ShiftRightLogical(x, 8)), 8);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
