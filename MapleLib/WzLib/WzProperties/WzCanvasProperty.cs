@@ -330,9 +330,18 @@ namespace MapleLib.WzLib.WzProperties {
         /// <returns>The pixels, or null when the canvas holds no image data.</returns>
         public byte[] GetLinkedPixelsBgra32(out int pixelWidth, out int pixelHeight)
         {
-            WzPngProperty target = ResolvePngProperty(GetLinkedWzImageProperty(), 0);
+            WzImageProperty linked = GetLinkedWzImageProperty();
+            WzPngProperty target = ResolvePngProperty(linked, 0);
             if (target == null)
             {
+                // Same as GetLinkedWzCanvasBitmap: a link that leads to a canvas (or PNG, or UOL) without pixel data
+                // has no image; only a link that does not resolve to an image property falls back to this canvas.
+                if (linked is WzCanvasProperty || linked is WzPngProperty || linked is WzUOLProperty)
+                {
+                    pixelWidth = 0;
+                    pixelHeight = 0;
+                    return null;
+                }
                 Debug.WriteLine($"Canvas link did not resolve to bitmap data: {FullPath}");
                 target = imageProp;
             }
