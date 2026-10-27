@@ -2658,10 +2658,14 @@ namespace MapleLib.Img
             placeholder.AddProperty(new WzStringProperty(WzCanvasProperty.OutlinkPropertyName, canvasInfo.OutlinkPath));
 
             // Create a minimal 1x1 placeholder PNG
+            placeholder.PngProperty = new WzPngProperty();
+#if LINUX_BUILD
+            placeholder.PngProperty.SetPixelsBgra32(new byte[4], 1, 1); // one transparent pixel, no GDI+ needed
+#else
             var placeholderBitmap = new Bitmap(1, 1);
             placeholderBitmap.SetPixel(0, 0, Color.Transparent);
-            placeholder.PngProperty = new WzPngProperty();
             placeholder.PngProperty.PNG = placeholderBitmap;
+#endif
 
             // Copy any non-canvas sub-properties (like origin, delay, etc.)
             foreach (var prop in originalCanvas.WzProperties)

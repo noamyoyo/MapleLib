@@ -204,7 +204,13 @@ namespace MapleLib.WzLib.WzProperties
                     if (value != listWzUsed)
                     {
                         listWzUsed = value;
+#if LINUX_BUILD
+                        byte[] pixels = GetPixelsBgra32(out int pixelWidth, out int pixelHeight);
+                        if (pixels != null)
+                            SetPixelsBgra32(pixels, pixelWidth, pixelHeight);
+#else
                         CompressPng(GetImage(false));
+#endif
                     }
                 }
             }
@@ -917,6 +923,15 @@ namespace MapleLib.WzLib.WzProperties
             (WzPngFormat format, byte[] compressedBytes) = PngUtility.CompressImageToPngFormat(bmp, suggested_surfaceFormat);
 
             this.Format = format;
+            StoreCompressedPixels(compressedBytes);
+        }
+
+        /// <summary>
+        /// Zlib-compresses the encoded pixel data and stores it as the payload of this property
+        /// (re-encrypting it first when the property uses the list.wz layout).
+        /// </summary>
+        private void StoreCompressedPixels(byte[] compressedBytes)
+        {
             this.compressedImageBytes = Compress(compressedBytes);
 
             if (listWzUsed)
@@ -936,6 +951,150 @@ namespace MapleLib.WzLib.WzProperties
                         compressedImageBytes = memStream.ToArray();
                     }
                 }
+            }
+        }
+        #endregion
+
+        #region Raw pixel API (no System.Drawing / GDI+)
+        /// <summary>
+        /// Decodes the canvas to straight-alpha BGRA32: 4 bytes per pixel in the order B, G, R, A, rows tightly packed
+        /// (stride = width * 4). This uses the same decoders as <see cref="GetImage(bool)"/> for every WZ pixel
+        /// format but never touches System.Drawing, so it also works where GDI+ is not available.
+        /// 16-bit formats are expanded the way GDI+ converts them to 32bpp ARGB: each 5-bit channel c becomes
+        /// (c &lt;&lt; 3) | (c &gt;&gt; 2), the 6-bit green channel g becomes (g &lt;&lt; 2) | (g &gt;&gt; 4), and the 1-bit alpha of
+        /// ARGB1555 becomes 0 or 255.
+        /// </summary>
+        /// <returns>The pixels, or null when the property holds no image data or has an unknown format.</returns>
+        /// <exception cref="InvalidDataException">The dimensions or the payload are invalid.</exception>
+        public byte[] GetPixelsBgra32(out int pixelWidth, out int pixelHeight)
+        {
+            lock (imageLock)
+            {
+                ValidateDimensions();
+                pixelWidth = width;
+                pixelHeight = height;
+
+                byte[] rawBytes = GetRawImage(false);
+                if (rawBytes == null)
+                    return null;
+
+                byte[] bgra;
+                switch (Format)
+                {
+                    case WzPngFormat.Format2:
+                        // Already BGRA8888; GetRawImage returned a fresh buffer of exactly width * height * 4 bytes.
+                        return rawBytes;
+                    case WzPngFormat.Format257:
+                        bgra = new byte[checked(width * height * 4)];
+                        PngUtility.ExpandArgb1555ToBgra32(rawBytes, bgra, width * height);
+                        return bgra;
+                    case WzPngFormat.Format513:
+                        bgra = new byte[checked(width * height * 4)];
+                        PngUtility.ExpandRgb565ToBgra32(rawBytes, bgra, width * height);
+                        return bgra;
+                }
+
+                bgra = new byte[checked(width * height * 4)];
+                GCHandle handle = GCHandle.Alloc(bgra, GCHandleType.Pinned);
+                try
+                {
+                    BitmapData target = new BitmapData
+                    {
+                        Width = width,
+                        Height = height,
+                        Stride = width * 4,
+                        PixelFormat = PixelFormat.Format32bppArgb,
+                        Scan0 = handle.AddrOfPinnedObject()
+                    };
+
+                    switch (Format)
+                    {
+                        case WzPngFormat.Format1:
+                            PngUtility.DecompressImage_PixelDataBgra4444(rawBytes.AsSpan(), width, height, target);
+                            break;
+                        case WzPngFormat.Format3:
+                        case WzPngFormat.Format1026:
+                            PngUtility.DecompressImageDXT3(rawBytes, width, height, target);
+                            break;
+                        case WzPngFormat.Format2050:
+                            PngUtility.DecompressImageDXT5(rawBytes, width, height, target);
+                            break;
+                        case WzPngFormat.Format4098:
+                            PngUtility.DecompressImageBC7(rawBytes, width, height, target);
+                            break;
+                        case WzPngFormat.Format517:
+                            {
+                                // One RGB565 value per 16x16 block: decode the blocks, then expand to BGRA32.
+                                byte[] rgb565 = new byte[checked(width * height * 2)];
+                                GCHandle handle565 = GCHandle.Alloc(rgb565, GCHandleType.Pinned);
+                                try
+                                {
+                                    BitmapData target565 = new BitmapData
+                                    {
+                                        Width = width,
+                                        Height = height,
+                                        Stride = width * 2,
+                                        PixelFormat = PixelFormat.Format16bppRgb565,
+                                        Scan0 = handle565.AddrOfPinnedObject()
+                                    };
+                                    PngUtility.DecompressImage_PixelDataForm517(rawBytes, width, height, target565);
+                                }
+                                finally
+                                {
+                                    handle565.Free();
+                                }
+                                PngUtility.ExpandRgb565ToBgra32(rgb565, bgra, width * height);
+                                break;
+                            }
+                        default:
+                            Helpers.ErrorLogger.Log(Helpers.ErrorLevel.MissingFeature, $"Unknown PNG format {Format}");
+                            return null;
+                    }
+                }
+                finally
+                {
+                    handle.Free();
+                }
+
+                return bgra;
+            }
+        }
+
+        /// <summary>
+        /// Replaces the image with straight-alpha BGRA32 pixels (B, G, R, A bytes, rows tightly packed). The WZ pixel
+        /// format is chosen automatically by <see cref="ImageFormatDetector"/>, as for <see cref="PNG"/>, unless
+        /// <paramref name="forceFormat"/> is given. Needs no GDI+.
+        /// </summary>
+        /// <param name="bgra">width * height * 4 bytes. Not modified.</param>
+        /// <param name="forceFormat">Optional target surface format (for example Bgra32 to keep every channel exact).</param>
+        /// <exception cref="ArgumentException">The buffer does not match the dimensions, or the dimensions exceed the limits.</exception>
+        public void SetPixelsBgra32(byte[] bgra, int pixelWidth, int pixelHeight, SurfaceFormat? forceFormat = null)
+        {
+            ArgumentNullException.ThrowIfNull(bgra);
+            if (pixelWidth <= 0 || pixelHeight <= 0)
+                throw new ArgumentOutOfRangeException(nameof(pixelWidth), "Image dimensions must be positive.");
+            if (pixelWidth > WzPngFormatExtensions.MaxDimension || pixelHeight > WzPngFormatExtensions.MaxDimension)
+                throw new ArgumentException("Image dimensions exceed the supported limit.", nameof(pixelWidth));
+            if ((long)pixelWidth * pixelHeight * 4L > WzPngFormatExtensions.MaxDecodedSize)
+                throw new ArgumentException("Image size exceeds the supported limit.", nameof(pixelWidth));
+            if ((long)pixelWidth * pixelHeight * 4L != bgra.Length)
+                throw new ArgumentException("The pixel buffer length does not match width * height * 4.", nameof(bgra));
+
+            lock (imageLock)
+            {
+                if (png != null)
+                {
+                    png.Dispose();
+                    png = null;
+                }
+
+                SurfaceFormat surface = forceFormat ?? ImageFormatDetector.DetermineTextureFormat(bgra, pixelWidth, pixelHeight);
+                (WzPngFormat pngFormat, byte[] encoded) = PngUtility.CompressImageToPngFormat(bgra, pixelWidth, pixelHeight, surface);
+
+                width = pixelWidth;
+                height = pixelHeight;
+                Format = pngFormat;
+                StoreCompressedPixels(encoded);
             }
         }
         #endregion

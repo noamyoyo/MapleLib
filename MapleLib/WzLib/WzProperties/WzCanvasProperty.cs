@@ -324,6 +324,41 @@ namespace MapleLib.WzLib.WzProperties {
         }
 
         /// <summary>
+        /// Like <see cref="GetLinkedWzCanvasBitmap"/> (follows '_inlink' / '_outlink'), but returns straight-alpha
+        /// BGRA32 pixels (see <see cref="WzPngProperty.GetPixelsBgra32"/>) and never uses System.Drawing.
+        /// </summary>
+        /// <returns>The pixels, or null when the canvas holds no image data.</returns>
+        public byte[] GetLinkedPixelsBgra32(out int pixelWidth, out int pixelHeight)
+        {
+            WzPngProperty target = ResolvePngProperty(GetLinkedWzImageProperty(), 0);
+            if (target == null)
+            {
+                Debug.WriteLine($"Canvas link did not resolve to bitmap data: {FullPath}");
+                target = imageProp;
+            }
+            if (target == null)
+            {
+                pixelWidth = 0;
+                pixelHeight = 0;
+                return null;
+            }
+            return target.GetPixelsBgra32(out pixelWidth, out pixelHeight);
+        }
+
+        private static WzPngProperty ResolvePngProperty(WzObject linked, int depth)
+        {
+            if (depth > 16)
+                return null;
+            return linked switch
+            {
+                WzCanvasProperty canvas => canvas.PngProperty,
+                WzPngProperty png => png,
+                WzUOLProperty uol => ResolvePngProperty(uol.LinkValue, depth + 1),
+                _ => null
+            };
+        }
+
+        /// <summary>
         /// Gets the '_inlink' or '_outlink' WzImageProperty of this.
         /// 
         /// '_inlink' is not implemented as part of WzCanvasProperty so as to not override existing Wz structure. 
