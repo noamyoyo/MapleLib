@@ -1713,7 +1713,9 @@ namespace MapleLib.Img
             ConcurrentDictionary<string, byte> extractedListWzImages)
         {
             // Create List directory
-            string listOutputPath = Path.Combine(outputVersionPath, "List");
+            // Resolved like a category directory: a link at List (or a root that is a link) is refused.
+            if (!TryGetContainedPath(outputVersionPath, "List", out string listOutputPath))
+                throw new IOException("The List output directory is a symbolic link or escapes the extraction root: " + Path.Combine(outputVersionPath, "List"));
             if (!Directory.Exists(listOutputPath))
             {
                 Directory.CreateDirectory(listOutputPath);
@@ -1727,7 +1729,7 @@ namespace MapleLib.Img
             var decryptedEntries = extractedListWzImages.Keys.ToList();
 
             // Create the JSON structure
-            var listData = new
+            var listData = new ListWzJsonFormat
             {
                 Type = "ListWz",
                 Description = "Pre-Big Bang List.wz - images with different encryption",

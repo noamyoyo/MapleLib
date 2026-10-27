@@ -107,6 +107,7 @@ namespace MapleLib.WzLib
             }
             catch
             {
+                outputFile.Dispose();
                 try { File.Delete(outputTemp); } catch { }
                 throw;
             }

@@ -41,6 +41,38 @@ namespace MapleLib.Helpers
             File.Move(tempPath, full, overwrite: true);
         }
 
+        /// <summary>
+        /// Throws <see cref="IOException"/> when <paramref name="rootPath"/> itself, or any existing directory or file on
+        /// the way from it down to <paramref name="path"/> (the last one included), is a symbolic link or other reparse
+        /// point, also a dangling one. Parts that do not exist yet are fine. <paramref name="path"/> must be below
+        /// <paramref name="rootPath"/>. This is a check of the state now (a link swapped in afterwards is not caught).
+        /// </summary>
+        public static void RefuseSymbolicLinksBelow(string rootPath, string path)
+        {
+            string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath));
+            string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+            string rootWithSeparator = root + Path.DirectorySeparatorChar;
+            if (!string.Equals(full, root, StringComparison.OrdinalIgnoreCase) &&
+                !full.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Path is not below " + root + ": " + full);
+
+            RefuseSymbolicLink(root);
+            if (full.Length <= root.Length)
+                return;
+
+            string current = root;
+            foreach (string segment in full.Substring(rootWithSeparator.Length).Split(
+                         new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                current = Path.Combine(current, segment);
+                var info = new FileInfo(current);
+                if (info.LinkTarget != null || (info.Exists && (info.Attributes & FileAttributes.ReparsePoint) != 0))
+                    throw new IOException("Refusing to write through the symbolic link " + current);
+                if (!info.Exists && !Directory.Exists(current))
+                    break;
+            }
+        }
+
         /// <summary>Throws <see cref="IOException"/> when <paramref name="path"/> is a symbolic link (also a dangling one).</summary>
         public static void RefuseSymbolicLink(string path)
         {

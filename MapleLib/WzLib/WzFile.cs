@@ -684,14 +684,16 @@ namespace MapleLib.WzLib
             string outputTemp = null;
             try
             {
-                using (scratch)
-                {
-                    wzDir.GenerateDataFile(bIsWzIvSimilar ? null : WzIv, bIsWzUserKeyDefault, scratch);
-                }
+                wzDir.GenerateDataFile(bIsWzIvSimilar ? null : WzIv, bIsWzUserKeyDefault, scratch);
+                // Read back through the stream that is already open: reopening the scratch file by name would follow a
+                // link swapped in at that name in the meantime.
+                scratch.Flush();
+                scratch.Seek(0, SeekOrigin.Begin);
 
                 WzTool.StringCache.Clear();
 
                 FileStream output = NoFollowFile.CreateTemp(fullPath, out outputTemp);
+                using (output)
                 using (WzBinaryWriter wzWriter = new WzBinaryWriter(output, WzIv))
                 {
                     wzWriter.Hash = versionHash;
@@ -718,10 +720,7 @@ namespace MapleLib.WzLib
                     wzDir.SaveDirectory(wzWriter);
                     wzWriter.StringCache.Clear();
 
-                    using (FileStream fs = File.OpenRead(tempFile))
-                    {
-                        wzDir.SaveImages(wzWriter, fs);
-                    }
+                    wzDir.SaveImages(wzWriter, scratch);
                     wzWriter.StringCache.Clear();
                 }
 
@@ -735,6 +734,7 @@ namespace MapleLib.WzLib
                 {
                     try { File.Delete(outputTemp); } catch { }
                 }
+                scratch.Dispose();
                 try { File.Delete(tempFile); } catch { }
             }
         }

@@ -643,6 +643,12 @@ namespace MapleLib.Img
             {
                 filePath = Path.GetFullPath(filePath);
 
+                // A symbolic link anywhere below the data source (the image file included) or below the backups
+                // directory is refused: the write and the backup copy would otherwise follow it out of the tree.
+                string backupPath = GetExternalBackupFilePath(filePath);
+                NoFollowFile.RefuseSymbolicLinksBelow(_versionPath, filePath);
+                NoFollowFile.RefuseSymbolicLinksBelow(HaCreatorPaths.GetBackupsPath(_versionPath), backupPath);
+
                 // Ensure directory exists
                 string directory = Path.GetDirectoryName(filePath);
                 if (!Directory.Exists(directory))
@@ -654,7 +660,7 @@ namespace MapleLib.Img
                 // until serialization has completed successfully.
                 tmpPath = $"{filePath}.{Guid.NewGuid():N}.tmp";
 
-                using (FileStream fs = File.Open(tmpPath, FileMode.Create))
+                using (FileStream fs = File.Open(tmpPath, FileMode.CreateNew))
                 {
                     using (WzBinaryWriter writer = new WzBinaryWriter(fs, _wzIv))
                     {
@@ -662,7 +668,6 @@ namespace MapleLib.Img
                     }
                 }
 
-                string backupPath = GetExternalBackupFilePath(filePath);
                 FileReplacement.ReplaceWithBackup(tmpPath, filePath, backupPath);
                 tmpPath = null;
 
