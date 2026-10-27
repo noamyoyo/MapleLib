@@ -710,7 +710,7 @@ namespace MapleLib.Img
             string fullFilePath = Path.GetFullPath(filePath);
             string versionRoot = Path.GetFullPath(_versionPath);
             string versionRootWithSeparator = Path.EndsInDirectorySeparator(versionRoot) ? versionRoot : versionRoot + Path.DirectorySeparatorChar;
-            string relativePath = fullFilePath.StartsWith(versionRootWithSeparator, StringComparison.OrdinalIgnoreCase)
+            string relativePath = fullFilePath.StartsWith(versionRootWithSeparator, NoFollowFile.PathComparison)
                 ? fullFilePath.Substring(versionRootWithSeparator.Length)
                 : Path.GetFileName(fullFilePath);
 
@@ -747,7 +747,7 @@ namespace MapleLib.Img
             string root = _versionPath;
             string rootWithSeparator = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
 
-            if (!fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+            if (!fullPath.StartsWith(rootWithSeparator, NoFollowFile.PathComparison))
                 throw new InvalidOperationException($"Image path escapes the version directory: {fullPath}");
 
             return fullPath;
@@ -761,7 +761,7 @@ namespace MapleLib.Img
             string root = _versionPath;
             string fullPath = Path.GetFullPath(Path.Combine(root, ResolveCategoryName(category)));
             string rootWithSeparator = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
-            if (!fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+            if (!fullPath.StartsWith(rootWithSeparator, NoFollowFile.PathComparison))
                 throw new InvalidOperationException($"Category path escapes the version directory: {fullPath}");
             return fullPath;
         }
@@ -776,7 +776,7 @@ namespace MapleLib.Img
                 ? categoryPath
                 : categoryPath + Path.DirectorySeparatorChar;
             if (!string.Equals(fullPath, categoryPath, StringComparison.OrdinalIgnoreCase) &&
-                !fullPath.StartsWith(categoryWithSeparator, StringComparison.OrdinalIgnoreCase))
+                !fullPath.StartsWith(categoryWithSeparator, NoFollowFile.PathComparison))
                 throw new InvalidOperationException($"Directory path escapes the category: {fullPath}");
             if (HaCreatorPaths.ContainsBackupsDirectory(fullPath))
                 throw new InvalidOperationException($"Backup directories are not part of the IMG data source: {fullPath}");
@@ -794,7 +794,7 @@ namespace MapleLib.Img
             string rootWithSeparator = Path.EndsInDirectorySeparator(root)
                 ? root
                 : root + Path.DirectorySeparatorChar;
-            return fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase) &&
+            return fullPath.StartsWith(rootWithSeparator, NoFollowFile.PathComparison) &&
                 !HaCreatorPaths.ContainsBackupsDirectory(fullPath);
         }
 
@@ -806,7 +806,7 @@ namespace MapleLib.Img
             // Extract category and relative path from full path
             string root = _versionPath;
             string rootWithSeparator = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
-            if (!filePath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+            if (!filePath.StartsWith(rootWithSeparator, NoFollowFile.PathComparison))
                 return null;
 
             string relative = filePath.Substring(rootWithSeparator.Length);

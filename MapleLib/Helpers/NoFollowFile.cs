@@ -42,6 +42,14 @@ namespace MapleLib.Helpers
         }
 
         /// <summary>
+        /// How paths are compared for "is below": exactly on a case-sensitive file system (Linux), ignoring case on
+        /// Windows. Comparing ignoring case on Linux would let /data/V83 pass for /data/v83 while a different
+        /// directory (possibly a link) is the one that is written.
+        /// </summary>
+        public static StringComparison PathComparison =>
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+        /// <summary>
         /// Throws <see cref="IOException"/> when <paramref name="rootPath"/> itself, or any existing directory or file on
         /// the way from it down to <paramref name="path"/> (the last one included), is a symbolic link or other reparse
         /// point, also a dangling one. Parts that do not exist yet are fine. <paramref name="path"/> must be below
@@ -52,8 +60,8 @@ namespace MapleLib.Helpers
             string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath));
             string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
             string rootWithSeparator = root + Path.DirectorySeparatorChar;
-            if (!string.Equals(full, root, StringComparison.OrdinalIgnoreCase) &&
-                !full.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(full, root, PathComparison) &&
+                !full.StartsWith(rootWithSeparator, PathComparison))
                 throw new IOException("Path is not below " + root + ": " + full);
 
             RefuseSymbolicLink(root);
@@ -66,10 +74,12 @@ namespace MapleLib.Helpers
             {
                 current = Path.Combine(current, segment);
                 var info = new FileInfo(current);
-                if (info.LinkTarget != null || (info.Exists && (info.Attributes & FileAttributes.ReparsePoint) != 0))
+                if (info.LinkTarget != null)
                     throw new IOException("Refusing to write through the symbolic link " + current);
                 if (!info.Exists && !Directory.Exists(current))
                     break;
+                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("Refusing to write through the reparse point " + current);
             }
         }
 

@@ -1713,9 +1713,9 @@ namespace MapleLib.Img
             ConcurrentDictionary<string, byte> extractedListWzImages)
         {
             // Create List directory
-            // Resolved like a category directory: a link at List (or a root that is a link) is refused.
-            if (!TryGetContainedPath(outputVersionPath, "List", out string listOutputPath))
-                throw new IOException("The List output directory is a symbolic link or escapes the extraction root: " + Path.Combine(outputVersionPath, "List"));
+            // A link at List, or the extraction root itself being a link, is refused (also a dangling one).
+            string listOutputPath = Path.Combine(outputVersionPath, "List");
+            NoFollowFile.RefuseSymbolicLinksBelow(outputVersionPath, listOutputPath);
             if (!Directory.Exists(listOutputPath))
             {
                 Directory.CreateDirectory(listOutputPath);
