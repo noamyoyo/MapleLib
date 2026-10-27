@@ -145,16 +145,27 @@ namespace MapleLib.Img
             ApplicationName);
 
         /// <summary>
-        /// Gets the backup directory next to a version directory.
+        /// Environment variable of the MCP server that restricts file access to one directory tree.
+        /// When it is set, backups are kept inside the version directory instead of next to it, because
+        /// the sibling directory would be outside that tree (and, in a container, outside the mounted volume).
+        /// </summary>
+        public const string AllowedRootEnvVar = "WZIMG_ALLOWED_ROOT";
+
+        /// <summary>
+        /// Gets the backup directory for a version directory: a <see cref="BackupsFolderName"/> sibling
+        /// directory by default, or a <see cref="BackupsFolderName"/> directory inside the version directory
+        /// when <see cref="AllowedRootEnvVar"/> is set. All enumeration helpers skip directories with this name.
         /// </summary>
         /// <param name="versionPath">The version directory whose backups are being stored</param>
-        /// <returns>A user-visible <see cref="BackupsFolderName"/> sibling directory</returns>
         public static string GetBackupsPath(string versionPath)
         {
             if (string.IsNullOrWhiteSpace(versionPath))
                 throw new ArgumentException("A version path is required.", nameof(versionPath));
 
             string fullVersionPath = Path.GetFullPath(versionPath);
+            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(AllowedRootEnvVar)))
+                return Path.Combine(fullVersionPath, BackupsFolderName);
+
             string parentPath = Directory.GetParent(fullVersionPath)?.FullName ?? fullVersionPath;
             return Path.Combine(parentPath, BackupsFolderName);
         }
