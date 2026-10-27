@@ -333,7 +333,11 @@ namespace MapleLib.WzLib.WzProperties
                         }
                         if (compressedImageBytes.Length != len)
                             throw new InvalidDataException("PNG payload is truncated.");
+#if !LINUX_BUILD
+                        // Decoding to a GDI+ bitmap is not possible on Linux, and extraction/packing only need
+                        // the compressed bytes; GetImage() still decodes lazily where a bitmap is requested.
                         ParsePng(true);
+#endif
                     }
                     else
                         reader.BaseStream.Position += len;
