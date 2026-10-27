@@ -1,4 +1,5 @@
 using MapleLib.ClientLib;
+using MapleLib.Helpers;
 using MapleLib.WzLib;
 using MapleLib.WzLib.MSFile;
 using MapleLib.WzLib.Serializer;
@@ -1740,7 +1741,7 @@ namespace MapleLib.Img
             };
 
             string json = JsonSerializer.Serialize(listData, MapleJsonContext.Default.ListWzJsonFormat);
-            File.WriteAllText(Path.Combine(listOutputPath, "List.json"), json);
+            NoFollowFile.WriteAllText(Path.Combine(listOutputPath, "List.json"), json);
 
             Debug.WriteLine($"[WzExtraction] List.wz: {listWzEntries.Count} total, {decryptedEntries.Count} decrypted, {remainingEntries.Count} remaining");
         }
@@ -1811,7 +1812,7 @@ namespace MapleLib.Img
         {
             string manifestPath = Path.Combine(outputPath, MANIFEST_FILENAME);
             string json = JsonSerializer.Serialize(versionInfo, MapleJsonContext.Default.VersionInfo);
-            File.WriteAllText(manifestPath, json);
+            NoFollowFile.WriteAllText(manifestPath, json);
         }
 
         /// <summary>
@@ -1958,10 +1959,9 @@ namespace MapleLib.Img
                 throw new InvalidDataException($"Lua image {image.Name} does not contain a Lua property.");
             }
 
-            File.WriteAllText(
+            NoFollowFile.WriteAllBytes(
                 outputPath,
-                luaProperty.GetString(),
-                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(luaProperty.GetString() ?? string.Empty));
         }
 
         /// <summary>
@@ -2052,7 +2052,7 @@ namespace MapleLib.Img
 
                 string json = JsonSerializer.Serialize(payload, MapleJsonContext.Default.ImageCaseMapData);
                 string mapPath = Path.Combine(categoryOutputPath, IMG_CASE_MAP_FILENAME);
-                File.WriteAllText(mapPath, json);
+                NoFollowFile.WriteAllText(mapPath, json);
             }
             catch (Exception ex)
             {

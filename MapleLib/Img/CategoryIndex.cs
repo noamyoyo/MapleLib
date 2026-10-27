@@ -1,4 +1,5 @@
 using System;
+using MapleLib.Helpers;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
@@ -157,7 +158,7 @@ namespace MapleLib.Img
         public void Save(string indexPath)
         {
             string json = JsonSerializer.Serialize(this, MapleJsonContext.Default.CategoryIndex);
-            File.WriteAllText(indexPath, json);
+            NoFollowFile.WriteAllText(indexPath, json);
         }
 
         /// <summary>

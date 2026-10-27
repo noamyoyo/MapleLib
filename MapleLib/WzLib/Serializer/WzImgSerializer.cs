@@ -1,4 +1,5 @@
 ﻿using MapleLib.WzLib.Util;
+using MapleLib.Helpers;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -101,29 +102,42 @@ namespace MapleLib.WzLib.Serializer
                 outPath += ".img";
             }
 
-            using (FileStream stream = File.Create(outPath))
+            // Written to a new file next to the target and renamed onto it; a symbolic link at the target is refused.
+            string fullOutPath = Path.GetFullPath(outPath);
+            NoFollowFile.RefuseSymbolicLink(fullOutPath);
+            FileStream stream = NoFollowFile.CreateTemp(fullOutPath, out string tempOutPath);
+            try
             {
-                byte[] iv = GetOutputIv(img);
-                if (img != null && img.GetType() == typeof(WzImage) && img.Changed &&
-                    (img.reader == null || img.parsed) && img.properties != null &&
-                    CanStageProperties(img.properties, 0))
+                using (stream)
                 {
-                    using var staging = new WzImgStagingStream(stream);
-                    using var wzWriter = new WzImgFileWriter(staging, iv);
-                    int previousSize = img.BlockSize;
-                    img.SaveImage(wzWriter);
-                    int serializedSize = img.BlockSize;
-                    // SaveImage commits size only after its writes succeed.
-                    // A failed materialization must leave the previous size.
-                    img.BlockSize = previousSize;
-                    staging.Complete();
-                    img.BlockSize = serializedSize;
+                    byte[] iv = GetOutputIv(img);
+                    if (img != null && img.GetType() == typeof(WzImage) && img.Changed &&
+                        (img.reader == null || img.parsed) && img.properties != null &&
+                        CanStageProperties(img.properties, 0))
+                    {
+                        using var staging = new WzImgStagingStream(stream);
+                        using var wzWriter = new WzImgFileWriter(staging, iv);
+                        int previousSize = img.BlockSize;
+                        img.SaveImage(wzWriter);
+                        int serializedSize = img.BlockSize;
+                        // SaveImage commits size only after its writes succeed.
+                        // A failed materialization must leave the previous size.
+                        img.BlockSize = previousSize;
+                        staging.Complete();
+                        img.BlockSize = serializedSize;
+                    }
+                    else
+                    {
+                        using var wzWriter = new WzImgFileWriter(stream, iv);
+                        img.SaveImage(wzWriter, !NeedsReencryption(img, iv));
+                    }
                 }
-                else
-                {
-                    using var wzWriter = new WzImgFileWriter(stream, iv);
-                    img.SaveImage(wzWriter, !NeedsReencryption(img, iv));
-                }
+                NoFollowFile.Commit(tempOutPath, fullOutPath);
+            }
+            catch
+            {
+                try { File.Delete(tempOutPath); } catch { }
+                throw;
             }
         }
 

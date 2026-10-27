@@ -1,4 +1,5 @@
 using MapleLib.WzLib;
+using MapleLib.Helpers;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -311,7 +312,7 @@ namespace MapleLib.Img
             string manifestPath = Path.Combine(versionInfo.DirectoryPath, MANIFEST_FILENAME);
 
             string json = JsonSerializer.Serialize(versionInfo, MapleJsonContext.Default.VersionInfo);
-            File.WriteAllText(manifestPath, json);
+            NoFollowFile.WriteAllText(manifestPath, json);
         }
 
         /// <summary>
@@ -527,7 +528,7 @@ namespace MapleLib.Img
                 if (File.Exists(manifestPath))
                 {
                     string json = JsonSerializer.Serialize(versionInfo, MapleJsonContext.Default.VersionInfo);
-                    File.WriteAllText(manifestPath, json);
+                    NoFollowFile.WriteAllText(manifestPath, json);
                 }
             }
             catch (IOException)
