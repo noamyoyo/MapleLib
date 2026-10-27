@@ -9,7 +9,9 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+#if !LINUX_BUILD
 using System.Windows.Media.Imaging;
+#endif
 
 namespace MapleLib.Converters
 {
@@ -45,6 +47,7 @@ namespace MapleLib.Converters
         }
         #endregion
 
+#if !LINUX_BUILD
         public static System.Drawing.Bitmap ToWinFormsBitmap(this BitmapSource bitmapsource)
         {
             using (MemoryStream stream = new MemoryStream())
@@ -61,6 +64,8 @@ namespace MapleLib.Converters
                 }
             }
         }
+
+#endif
 
         /// <summary>
         /// System.Drawing.Bitmap to System.Drawing.Image
@@ -99,6 +104,7 @@ namespace MapleLib.Converters
             }
         }
 
+#if !LINUX_BUILD
         public static BitmapSource ToWpfBitmap(this System.Drawing.Bitmap bitmap) 
         {
             if (bitmap == null)
@@ -121,6 +127,8 @@ namespace MapleLib.Converters
                 return result;
             }
         }
+
+#endif
 
         /// <summary>
         /// Gets the image format from a Bitmap object.

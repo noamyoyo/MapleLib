@@ -4,7 +4,6 @@ using MapleLib.WzLib.WzProperties;
 using MapleLib.WzLib.WzStructure;
 using MapleLib.WzLib.WzStructure.Data;
 using MapleLib.WzLib.WzStructure.Data.MapStructure;
-using SharpDX.Direct2D1.Effects;
 using System;
 using System.Collections.Generic;
 using System.Drawing;

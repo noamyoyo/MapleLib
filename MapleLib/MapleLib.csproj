@@ -1,11 +1,13 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework Condition="'$(LinuxBuild)' != 'true'">net10.0-windows</TargetFramework>
+    <TargetFramework Condition="'$(LinuxBuild)' == 'true'">net10.0</TargetFramework>
+    <DefineConstants Condition="'$(LinuxBuild)' == 'true'">$(DefineConstants);LINUX_BUILD</DefineConstants>
     <OutputType>Library</OutputType>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
 
-    <UseWindowsForms>true</UseWindowsForms>
-    <UseWPF>true</UseWPF>
+    <UseWindowsForms Condition="'$(LinuxBuild)' != 'true'">true</UseWindowsForms>
+    <UseWPF Condition="'$(LinuxBuild)' != 'true'">true</UseWPF>
 
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <Nullable>annotations</Nullable>
@@ -15,7 +17,7 @@
     <IlcOptimizationPreference>Speed</IlcOptimizationPreference>
     <IlcPgoOptimize>true</IlcPgoOptimize>
 
-    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <EnableWindowsTargeting Condition="'$(LinuxBuild)' != 'true'">true</EnableWindowsTargeting>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -34,15 +36,17 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="lz4net" Version="1.0.15.93" PrivateAssets="all" />
+    <PackageReference Include="NAudio.Core" Version="2.3.0" />
+    <PackageReference Include="NAudio.Midi" Version="2.3.0" />
+    <PackageReference Include="Newtonsoft.Json.Bson" Version="1.0.3" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(LinuxBuild)' != 'true'">
     <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.4.1" />
     <PackageReference Include="NAudio" Version="2.3.0" />
     <PackageReference Include="NAudio.Asio" Version="2.3.0" />
-    <PackageReference Include="NAudio.Core" Version="2.3.0" />
-    <PackageReference Include="NAudio.Midi" Version="2.3.0" />
     <PackageReference Include="NAudio.Wasapi" Version="2.3.0" />
     <PackageReference Include="NAudio.WinForms" Version="2.3.0" />
     <PackageReference Include="NAudio.WinMM" Version="2.3.0" />
-    <PackageReference Include="Newtonsoft.Json.Bson" Version="1.0.3" />
     <PackageReference Include="SharpDX" Version="4.2.0" />
     <PackageReference Include="SharpDX.Direct2D1" Version="4.2.0" />
     <PackageReference Include="SharpDX.Direct3D11" Version="4.2.0" />
@@ -52,6 +56,10 @@
     <PackageReference Include="SharpDX.MediaFoundation" Version="4.2.0" />
     <PackageReference Include="SharpDX.XAudio2" Version="4.2.0" />
     <PackageReference Include="SharpDX.XInput" Version="4.2.0" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(LinuxBuild)' == 'true'">
+    <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.4.1" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.0" />
   </ItemGroup>
   <ItemGroup>
     <Compile Remove="WzLib\WzProperties\WzListEntry.cs" />

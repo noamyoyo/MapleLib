@@ -1015,7 +1015,11 @@ namespace MapleLib {
                 throw;
             }
             if (parseStatus != WzFileParseStatus.Success) {
+#if LINUX_BUILD
+                Console.Error.WriteLine("Error parsing " + baseName + ".wz (" + parseStatus.GetErrorDescription() + ")");
+#else
                 MessageBox.Show("Error parsing " + baseName + ".wz (" + parseStatus.GetErrorDescription() + ")");
+#endif
                 wzf.Dispose();
                 return false;
             }

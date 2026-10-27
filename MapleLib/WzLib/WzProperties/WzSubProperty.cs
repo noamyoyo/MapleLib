@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using MapleLib.WzLib.Util;
-using SharpDX.Direct2D1;
 
 namespace MapleLib.WzLib.WzProperties
 {
