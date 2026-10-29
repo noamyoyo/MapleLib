@@ -115,23 +115,34 @@ namespace MapleLib.Img
             return _manager.GetStats();
         }
 
+        /// <summary>
+        /// Saves an image. Without <paramref name="relativePath"/> the image goes back to the exact file it was loaded
+        /// from (whatever spelling the caller used for its name); this throws when the image was not loaded from this
+        /// data source or its file has been removed meanwhile, and returns false when the write fails. With an explicit
+        /// <paramref name="relativePath"/> it is saved to that path inside the category ("save as").
+        /// </summary>
         public bool SaveImage(string category, WzImage image, string relativePath = null)
         {
             if (image == null)
                 return false;
 
-            // Use relativePath if provided, otherwise use image.Name
-            string path = relativePath ?? image.Name;
-            return _manager.SaveImage(image, category, path);
+            if (relativePath == null)
+                return _manager.SaveLoadedImage(image);
+
+            return _manager.SaveImage(image, category, relativePath);
         }
 
+        /// <summary>
+        /// For the IMG filesystem an updated image is saved immediately, back to the file it was loaded from.
+        /// Throws when the image was not loaded from this data source, when its file is gone, or when the write fails.
+        /// </summary>
         public void MarkImageUpdated(string category, WzImage image)
         {
-            // For IMG filesystem, save immediately when marked as updated, back to the path the
-            // image was loaded from (image.Name is only the file name, not the folder).
-            string relativePath = _manager.FindCachedRelativePath(category, image)
-                ?? throw new InvalidOperationException($"Image {category}/{image?.Name} was not loaded from this data source; it cannot be saved back to its own path.");
-            SaveImage(category, image, relativePath);
+            if (image == null)
+                throw new ArgumentNullException(nameof(image));
+
+            if (!_manager.SaveLoadedImage(image))
+                throw new IOException($"Saving {category}/{image.Name} failed; the file on disk was not changed.");
         }
 
         /// <summary>

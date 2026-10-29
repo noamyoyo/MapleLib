@@ -11,6 +11,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Text.Json;
@@ -46,6 +47,13 @@ namespace MapleLib.Img
 
         private readonly ReaderWriterLockSlim _cacheLock = new();
         private readonly LRUCache<string, WzImage> _imageCache;
+
+        /// <summary>
+        /// The full path each image was loaded from (or created at). save_image writes back to exactly this path: the
+        /// cache keys are lower-cased and the caller's spelling of the name may differ (case, no ".img", "..").
+        /// Weak, so it does not keep evicted images alive.
+        /// </summary>
+        private readonly ConditionalWeakTable<WzImage, string> _loadedPaths = new ConditionalWeakTable<WzImage, string>();
         private readonly ConcurrentDictionary<string, VirtualWzDirectory> _directoryCache = new();
         private readonly ConcurrentDictionary<string, List<string>> _categoryIndex = new();
         private readonly ConcurrentDictionary<string, byte> _indexedCategories = new();
@@ -127,7 +135,8 @@ namespace MapleLib.Img
             long maxCacheBytes = _config.Cache?.MaxMemoryCacheMB > 0
                 ? _config.Cache.MaxMemoryCacheMB * 1024L * 1024L
                 : DEFAULT_MAX_CACHE_BYTES;
-            _imageCache = new LRUCache<string, WzImage>(maxCacheBytes, EstimateWzImageSize);
+            // Images with unsaved changes are pinned: evicting one would make the next access reload the file from disk and drop the edits.
+            _imageCache = new LRUCache<string, WzImage>(maxCacheBytes, EstimateWzImageSize, IsPinnedImage);
 
             // Load version manifest
             string manifestPath = Path.Combine(_versionPath, MANIFEST_FILENAME);
@@ -317,7 +326,10 @@ namespace MapleLib.Img
         /// <returns>The loaded WzImage or null if not found</returns>
         public WzImage LoadImage(string category, string relativePath)
         {
-            string cacheKey = CreateCacheKey(category, relativePath);
+            // Build the full path first: the cache key comes from it, so every spelling of the same file
+            // ("Map0/x.img", "map0/x.img", "Map0/x", "Map0/../Map0/x.img") shares one cached image.
+            string fullPath = GetContainedImagePath(category, relativePath);
+            string cacheKey = GetCacheKeyFromPath(fullPath) ?? CreateCacheKey(category, relativePath);
 
             // Check LRU cache first
             if (_imageCache.TryGet(cacheKey, out var cachedImage))
@@ -328,9 +340,6 @@ namespace MapleLib.Img
 
             Interlocked.Increment(ref _cacheMisses);
 
-            // Build full path
-            string fullPath = GetContainedImagePath(category, relativePath);
-
             if (!File.Exists(fullPath))
                 return null;
 
@@ -338,7 +347,8 @@ namespace MapleLib.Img
             WzImage image = LoadImageFromFile(fullPath, Path.GetFileName(relativePath));
             if (image != null)
             {
-                // Add to LRU cache (will auto-evict if over capacity)
+                // Remember where it came from, then add to the LRU cache (will auto-evict if over capacity)
+                _loadedPaths.AddOrUpdate(image, fullPath);
                 _imageCache.Add(cacheKey, image);
             }
 
@@ -628,12 +638,50 @@ namespace MapleLib.Img
         }
 
         /// <summary>
+        /// Returns the full path an image was loaded from (or created at), or null when this manager did not load it.
+        /// </summary>
+        public string GetLoadedImagePath(WzImage image)
+        {
+            if (image == null)
+                return null;
+            return _loadedPaths.TryGetValue(image, out string path) ? path : null;
+        }
+
+        /// <summary>
+        /// Saves an image back to the file it was loaded from, whatever spelling the caller used for its name.
+        /// Throws when the image was not loaded by this manager, or when that file or its folder no longer exists
+        /// (nothing is recreated and no directory is created). Returns false when the write itself fails (the file on
+        /// disk is then unchanged). After a successful save every cache entry of the image is removed, so the next access
+        /// reads the file that was just written (the in-memory image still points at the old offsets).
+        /// </summary>
+        public bool SaveLoadedImage(WzImage image, bool evictFromCache = true)
+        {
+            if (image == null)
+                throw new ArgumentNullException(nameof(image));
+
+            string path = GetLoadedImagePath(image)
+                ?? throw new InvalidOperationException($"Image {image.Name} was not loaded from this data source; it cannot be saved back to its own file.");
+            if (!File.Exists(path))
+                throw new FileNotFoundException($"The file this image was loaded from no longer exists (removed or renamed): {path}. Nothing was written.");
+
+            bool saved = SaveImageCore(image, path, allowCreateDirectory: false);
+            if (saved && evictFromCache)
+                RemoveFromCache(image);
+            return saved;
+        }
+
+        /// <summary>
         /// Saves a WzImage directly to a file path
         /// </summary>
         /// <param name="image">The image to save</param>
         /// <param name="filePath">Full file path</param>
         /// <returns>True if saved successfully</returns>
         public bool SaveImageToFile(WzImage image, string filePath)
+        {
+            return SaveImageCore(image, filePath, allowCreateDirectory: true);
+        }
+
+        private bool SaveImageCore(WzImage image, string filePath, bool allowCreateDirectory)
         {
             if (image == null)
                 throw new ArgumentNullException(nameof(image));
@@ -649,10 +697,12 @@ namespace MapleLib.Img
                 NoFollowFile.RefuseSymbolicLinksBelow(_versionPath, filePath);
                 NoFollowFile.RefuseSymbolicLinksBelow(HaCreatorPaths.GetBackupsPath(_versionPath), backupPath);
 
-                // Ensure directory exists
+                // Ensure directory exists (never created when saving an image back to the file it was loaded from)
                 string directory = Path.GetDirectoryName(filePath);
                 if (!Directory.Exists(directory))
                 {
+                    if (!allowCreateDirectory)
+                        throw new DirectoryNotFoundException($"The folder of {filePath} no longer exists; nothing was written.");
                     Directory.CreateDirectory(directory);
                 }
 
@@ -867,6 +917,7 @@ namespace MapleLib.Img
             // Save it
             if (SaveImageToFile(newImage, fullPath))
             {
+                _loadedPaths.AddOrUpdate(newImage, fullPath);
                 // Update category index
                 string categoryLower = category.ToLowerInvariant();
                 if (!_categoryIndex.ContainsKey(categoryLower))
@@ -951,68 +1002,50 @@ namespace MapleLib.Img
         /// </summary>
         public void ClearCache()
         {
-            // LRU cache handles disposal of IDisposable items internally
-            _imageCache.Clear();
+            // Images with unsaved changes stay: dropping them would silently lose the edits.
+            _imageCache.ClearUnpinned();
         }
 
         /// <summary>
-        /// Removes a specific image from the cache
+        /// Removes a specific image from the cache (any spelling of its name)
         /// </summary>
         public void RemoveFromCache(string category, string relativePath)
         {
-            string cacheKey = CreateCacheKey(category, relativePath);
             // LRU cache handles disposal of IDisposable items internally
-            _imageCache.Remove(cacheKey);
+            _imageCache.Remove(ResolveCacheKey(category, relativePath));
         }
 
         /// <summary>
-        /// Finds the relative path an already-loaded image was read from, by looking for the same
-        /// object in the cache. Cache keys are lower-cased, so the real on-disk spelling is looked up
-        /// segment by segment (the file system may be case sensitive). Returns null when the image is
-        /// not cached under this category or no matching file exists.
+        /// Removes every cache entry that holds this image object.
         /// </summary>
-        public string FindCachedRelativePath(string category, WzImage image)
+        public void RemoveFromCache(WzImage image)
         {
-            string prefix = CreateCacheKey(category, string.Empty);
-            string lowerPath = null;
             foreach (var item in _imageCache.GetAllItems())
             {
-                if (ReferenceEquals(item.Value, image) && item.Key.StartsWith(prefix, StringComparison.Ordinal))
-                {
-                    lowerPath = item.Key.Substring(prefix.Length);
-                    break;
-                }
+                if (ReferenceEquals(item.Value, image))
+                    _imageCache.Remove(item.Key);
             }
+        }
 
-            if (lowerPath == null)
-                return null;
+        private static bool IsPinnedImage(WzImage image) => image != null && image.Changed;
 
-            string current = Path.Combine(_versionPath, ResolveCategoryName(category));
-            var realSegments = new List<string>();
-            foreach (string segment in lowerPath.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        /// <summary>
+        /// The cache key of an image given as category and relative path: built from the contained full path, like
+        /// <see cref="LoadImage"/> does. Falls back to the plain lower-cased spelling when the path is not valid.
+        /// </summary>
+        private string ResolveCacheKey(string category, string relativePath)
+        {
+            try
             {
-                string match = null;
-                if (Directory.Exists(current))
-                {
-                    foreach (string entry in Directory.EnumerateFileSystemEntries(current))
-                    {
-                        string name = Path.GetFileName(entry);
-                        if (string.Equals(name, segment, StringComparison.OrdinalIgnoreCase))
-                        {
-                            match = name;
-                            break;
-                        }
-                    }
-                }
-
-                if (match == null)
-                    return null;
-
-                realSegments.Add(match);
-                current = Path.Combine(current, match);
+                string key = GetCacheKeyFromPath(GetContainedImagePath(category, relativePath));
+                if (key != null)
+                    return key;
             }
-
-            return string.Join('/', realSegments);
+            catch (Exception ex) when (ex is InvalidOperationException || ex is ArgumentException)
+            {
+                // fall through
+            }
+            return CreateCacheKey(category ?? string.Empty, relativePath ?? string.Empty);
         }
 
         /// <summary>
@@ -1090,23 +1123,23 @@ namespace MapleLib.Img
         public int SaveAllChangedImages()
         {
             int savedCount = 0;
-            var changedImages = GetChangedImages().ToList();
 
-            foreach (var kvp in changedImages)
+            // Each changed image goes back to the path it was loaded from (the cache key is lower-cased and
+            // may hold another spelling of the name). The same image can sit under several keys: save it once.
+            var seen = new HashSet<WzImage>(ReferenceEqualityComparer.Instance);
+            foreach (var kvp in GetChangedImages().ToList())
             {
-                // Parse cache key to get category and relative path
-                // Key format is "category/relativePath"
-                string cacheKey = kvp.Key;
-                int separatorIndex = cacheKey.IndexOf('/');
-                if (separatorIndex > 0)
-                {
-                    string category = cacheKey.Substring(0, separatorIndex);
-                    string relativePath = cacheKey.Substring(separatorIndex + 1);
+                if (!seen.Add(kvp.Value))
+                    continue;
 
-                    if (SaveImage(kvp.Value, category, relativePath))
-                    {
+                try
+                {
+                    if (SaveLoadedImage(kvp.Value, evictFromCache: false))
                         savedCount++;
-                    }
+                }
+                catch (Exception ex) when (ex is InvalidOperationException || ex is IOException)
+                {
+                    Debug.WriteLine($"Not saving {kvp.Key}: {ex.Message}");
                 }
             }
 
@@ -1475,8 +1508,7 @@ namespace MapleLib.Img
         /// <param name="relativePath">The relative path within the category</param>
         public void InvalidateCache(string category, string relativePath)
         {
-            string cacheKey = CreateCacheKey(category, relativePath);
-            _imageCache.Remove(cacheKey);
+            _imageCache.Remove(ResolveCacheKey(category, relativePath));
 
             // Also invalidate the directory cache for this category
             string categoryLower = category.ToLowerInvariant();

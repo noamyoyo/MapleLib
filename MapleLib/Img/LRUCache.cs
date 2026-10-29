@@ -17,6 +17,7 @@ namespace MapleLib.Img
         private readonly LinkedList<CacheItem> _lruList;
         private readonly ReaderWriterLockSlim _lock;
         private readonly Func<TValue, long> _sizeEstimator;
+        private readonly Func<TValue, bool> _isPinned;
         private long _currentSize;
         private long _maxSizeBytes;
         private bool _disposed;
@@ -51,8 +52,14 @@ namespace MapleLib.Img
         /// </summary>
         /// <param name="maxSizeBytes">Maximum total size in bytes</param>
         /// <param name="sizeEstimator">Function to estimate size of each value</param>
-        public LRUCache(long maxSizeBytes, Func<TValue, long> sizeEstimator)
+        /// <param name="isPinned">
+        /// Optional. Values for which it returns true are never evicted to make room (the cache may then grow past its
+        /// limit) and survive <see cref="ClearUnpinned"/>. The IMG manager pins images with unsaved changes, because an
+        /// evicted image would be reloaded from disk on the next access and the edits would be lost.
+        /// </param>
+        public LRUCache(long maxSizeBytes, Func<TValue, long> sizeEstimator, Func<TValue, bool> isPinned = null)
         {
+            _isPinned = isPinned;
             _capacity = int.MaxValue;
             _maxSizeBytes = maxSizeBytes > 0 ? maxSizeBytes : 512 * 1024 * 1024; // 512MB default
             _sizeEstimator = sizeEstimator ?? throw new ArgumentNullException(nameof(sizeEstimator));
@@ -323,6 +330,43 @@ namespace MapleLib.Img
         }
 
         /// <summary>
+        /// Clears all items except the pinned ones (see the constructor). Without a pin predicate this equals <see cref="Clear"/>.
+        /// </summary>
+        public void ClearUnpinned()
+        {
+            ThrowIfDisposed();
+            _lock.EnterWriteLock();
+            try
+            {
+                ThrowIfDisposed();
+                if (_isPinned == null)
+                {
+                    _cache.Clear();
+                    _lruList.Clear();
+                    _currentSize = 0;
+                    return;
+                }
+
+                var node = _lruList.First;
+                while (node != null)
+                {
+                    var next = node.Next;
+                    if (!_isPinned(node.Value.Value))
+                    {
+                        _currentSize -= node.Value.Size;
+                        _cache.Remove(node.Value.Key);
+                        _lruList.Remove(node);
+                    }
+                    node = next;
+                }
+            }
+            finally
+            {
+                _lock.ExitWriteLock();
+            }
+        }
+
+        /// <summary>
         /// Resets cache statistics
         /// </summary>
         public void ResetStatistics()
@@ -351,21 +395,27 @@ namespace MapleLib.Img
             };
         }
 
-        private void EvictLeastRecentlyUsed()
+        /// <summary>Evicts the least recently used item that is not pinned. Returns false when there is none.</summary>
+        private bool EvictLeastRecentlyUsed()
         {
             var lastNode = _lruList.Last;
+            while (lastNode != null && _isPinned != null && _isPinned(lastNode.Value.Value))
+                lastNode = lastNode.Previous;
+
             if (lastNode != null)
             {
                 _currentSize -= lastNode.Value.Size;
                 _cache.Remove(lastNode.Value.Key);
-                _lruList.RemoveLast();
+                _lruList.Remove(lastNode);
                 Interlocked.Increment(ref _evictionCount);
 
                 // Don't dispose on eviction - the InfoManager caches hold references to
                 // properties inside these WzImages. Disposing would invalidate those references.
                 // With freeResources=true, file handles are already closed after parsing.
                 // Memory will be freed by GC when no more references exist.
+                return true;
             }
+            return false;
         }
 
         private void AddCore(TKey key, TValue value, long? estimatedSize = null)
@@ -386,7 +436,10 @@ namespace MapleLib.Img
 
             // Evict until both item count and estimated size are within limits.
             while ((_cache.Count >= _capacity || itemSize > _maxSizeBytes - _currentSize) && _lruList.Count > 0)
-                EvictLeastRecentlyUsed();
+            {
+                if (!EvictLeastRecentlyUsed())
+                    break;   // everything left is pinned: keep it, the cache is allowed to grow past its limit
+            }
 
             var cacheItem = new CacheItem
             {
