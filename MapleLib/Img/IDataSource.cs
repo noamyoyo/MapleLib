@@ -89,6 +89,14 @@ namespace MapleLib.Img
         IEnumerable<string> GetImageNamesInDirectory(string category, string subDirectory);
 
         /// <summary>
+        /// Gets the relative path of every image in a category (all subdirectories included, "/" or the OS separator,
+        /// with the ".img" extension) WITHOUT loading or parsing any image. Sorted by ordinal comparison, so the order is
+        /// stable between calls and suitable for paging. Empty for an unknown category.
+        /// </summary>
+        /// <param name="category">The category</param>
+        IReadOnlyList<string> GetImagePathsInCategory(string category);
+
+        /// <summary>
         /// Checks if an image exists
         /// </summary>
         /// <param name="category">The category</param>
@@ -189,6 +197,16 @@ namespace MapleLib.Img
         /// Approximate memory usage in bytes
         /// </summary>
         public long MemoryUsageBytes { get; set; }
+
+        /// <summary>
+        /// Size limit of the image cache in bytes (0 when the data source has no size limited cache)
+        /// </summary>
+        public long CacheLimitBytes { get; set; }
+
+        /// <summary>
+        /// Number of cached images with unsaved edits (these are never evicted)
+        /// </summary>
+        public int PinnedImageCount { get; set; }
 
         /// <summary>
         /// Number of images loaded from disk

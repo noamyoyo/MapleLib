@@ -94,6 +94,11 @@ namespace MapleLib.Img
         public long CurrentSizeBytes => Interlocked.Read(ref _currentSize);
 
         /// <summary>
+        /// Gets the size limit in bytes (of the values' estimated sizes)
+        /// </summary>
+        public long MaxSizeBytes => Interlocked.Read(ref _maxSizeBytes);
+
+        /// <summary>
         /// Gets the cache hit count
         /// </summary>
         public long HitCount => Interlocked.Read(ref _hitCount);
@@ -151,6 +156,32 @@ namespace MapleLib.Img
             finally
             {
                 _lock.ExitWriteLock();
+            }
+        }
+
+        /// <summary>
+        /// Looks a value up without counting a hit or a miss and without moving it to the front of the LRU order
+        /// (a one-off pass over many images must not change what the cache considers recently used).
+        /// </summary>
+        public bool TryPeek(TKey key, out TValue value)
+        {
+            ThrowIfDisposed();
+            _lock.EnterReadLock();
+            try
+            {
+                ThrowIfDisposed();
+                if (_cache.TryGetValue(key, out var node))
+                {
+                    value = node.Value.Value;
+                    return true;
+                }
+
+                value = default;
+                return false;
+            }
+            finally
+            {
+                _lock.ExitReadLock();
             }
         }
 
@@ -357,20 +388,23 @@ namespace MapleLib.Img
 
         /// <summary>
         /// Clears all items except the pinned ones (see the constructor). Without a pin predicate this equals <see cref="Clear"/>.
+        /// Returns how many items were removed.
         /// </summary>
-        public void ClearUnpinned()
+        public int ClearUnpinned()
         {
             ThrowIfDisposed();
             _lock.EnterWriteLock();
             try
             {
                 ThrowIfDisposed();
+                int removed = 0;
                 if (_isPinned == null)
                 {
+                    removed = _cache.Count;
                     _cache.Clear();
                     _lruList.Clear();
                     _currentSize = 0;
-                    return;
+                    return removed;
                 }
 
                 var node = _lruList.First;
@@ -382,13 +416,42 @@ namespace MapleLib.Img
                         _currentSize -= node.Value.Size;
                         _cache.Remove(node.Value.Key);
                         _lruList.Remove(node);
+                        removed++;
                     }
                     node = next;
                 }
+                return removed;
             }
             finally
             {
                 _lock.ExitWriteLock();
+            }
+        }
+
+        /// <summary>
+        /// Counts the pinned items (see the constructor). Zero without a pin predicate.
+        /// </summary>
+        public int CountPinned()
+        {
+            if (_isPinned == null)
+                return 0;
+
+            ThrowIfDisposed();
+            _lock.EnterReadLock();
+            try
+            {
+                ThrowIfDisposed();
+                int pinned = 0;
+                foreach (var node in _lruList)
+                {
+                    if (_isPinned(node.Value))
+                        pinned++;
+                }
+                return pinned;
+            }
+            finally
+            {
+                _lock.ExitReadLock();
             }
         }
 

@@ -59,6 +59,32 @@ namespace MapleLib.Img
             return _manager.GetImageNamesInDirectory(category, subDirectory);
         }
 
+        public IReadOnlyList<string> GetImagePathsInCategory(string category)
+        {
+            return _manager.GetImagePathsInCategory(category);
+        }
+
+        /// <summary>Size of an image file in bytes without opening the image; -1 when it does not exist.</summary>
+        public long GetImageFileSize(string category, string relativePath)
+        {
+            return _manager.GetImageFileSize(category, relativePath);
+        }
+
+        /// <summary>
+        /// Opens an image for a one-off pass without caching it (see <see cref="ImgFileSystemManager.OpenImageUncached"/>):
+        /// the caller disposes the image unless <paramref name="fromCache"/> is true.
+        /// </summary>
+        public WzImage OpenImageUncached(string category, string relativePath, out bool fromCache)
+        {
+            return _manager.OpenImageUncached(category, relativePath, out fromCache);
+        }
+
+        /// <summary>The cached images with the category and path each was loaded from; nothing is loaded.</summary>
+        public IReadOnlyList<CachedImageInfo> GetCachedImages() => _manager.GetCachedImages();
+
+        /// <summary>Drops every cached image without unsaved edits; returns how many were dropped.</summary>
+        public int ReleaseUnpinnedImages() => _manager.ReleaseUnpinnedImages();
+
         public bool ImageExists(string category, string imageName)
         {
             return _manager.ImageExists(category, imageName);
@@ -408,6 +434,23 @@ namespace MapleLib.Img
             }
         }
 
+        public IReadOnlyList<string> GetImagePathsInCategory(string category)
+        {
+            var paths = new List<string>();
+            foreach (var dir in GetDirectories(category))
+                AddImagePaths(dir, "", paths);
+            paths.Sort(StringComparer.Ordinal);
+            return paths;
+        }
+
+        private static void AddImagePaths(WzDirectory directory, string prefix, List<string> paths)
+        {
+            foreach (var img in directory.WzImages)
+                paths.Add(prefix + img.Name);
+            foreach (var sub in directory.WzDirectories)
+                AddImagePaths(sub, prefix + sub.Name + "/", paths);
+        }
+
         public bool ImageExists(string category, string imageName)
         {
             return GetImage(category, imageName) != null;
@@ -754,6 +797,21 @@ namespace MapleLib.Img
             }
 
             return Enumerable.Empty<string>();
+        }
+
+        public IReadOnlyList<string> GetImagePathsInCategory(string category)
+        {
+            if (_hasImgSource && _imgSource.CategoryExists(category))
+            {
+                return _imgSource.GetImagePathsInCategory(category);
+            }
+
+            if (_hasWzSource)
+            {
+                return _wzSource.GetImagePathsInCategory(category);
+            }
+
+            return Array.Empty<string>();
         }
 
         public bool ImageExists(string category, string imageName)
