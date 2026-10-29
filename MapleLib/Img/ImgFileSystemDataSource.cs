@@ -127,8 +127,11 @@ namespace MapleLib.Img
 
         public void MarkImageUpdated(string category, WzImage image)
         {
-            // For IMG filesystem, save immediately when marked as updated
-            SaveImage(category, image);
+            // For IMG filesystem, save immediately when marked as updated, back to the path the
+            // image was loaded from (image.Name is only the file name, not the folder).
+            string relativePath = _manager.FindCachedRelativePath(category, image)
+                ?? throw new InvalidOperationException($"Image {category}/{image?.Name} was not loaded from this data source; it cannot be saved back to its own path.");
+            SaveImage(category, image, relativePath);
         }
 
         /// <summary>

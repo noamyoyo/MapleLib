@@ -966,6 +966,56 @@ namespace MapleLib.Img
         }
 
         /// <summary>
+        /// Finds the relative path an already-loaded image was read from, by looking for the same
+        /// object in the cache. Cache keys are lower-cased, so the real on-disk spelling is looked up
+        /// segment by segment (the file system may be case sensitive). Returns null when the image is
+        /// not cached under this category or no matching file exists.
+        /// </summary>
+        public string FindCachedRelativePath(string category, WzImage image)
+        {
+            string prefix = CreateCacheKey(category, string.Empty);
+            string lowerPath = null;
+            foreach (var item in _imageCache.GetAllItems())
+            {
+                if (ReferenceEquals(item.Value, image) && item.Key.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    lowerPath = item.Key.Substring(prefix.Length);
+                    break;
+                }
+            }
+
+            if (lowerPath == null)
+                return null;
+
+            string current = Path.Combine(_versionPath, ResolveCategoryName(category));
+            var realSegments = new List<string>();
+            foreach (string segment in lowerPath.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                string match = null;
+                if (Directory.Exists(current))
+                {
+                    foreach (string entry in Directory.EnumerateFileSystemEntries(current))
+                    {
+                        string name = Path.GetFileName(entry);
+                        if (string.Equals(name, segment, StringComparison.OrdinalIgnoreCase))
+                        {
+                            match = name;
+                            break;
+                        }
+                    }
+                }
+
+                if (match == null)
+                    return null;
+
+                realSegments.Add(match);
+                current = Path.Combine(current, match);
+            }
+
+            return string.Join('/', realSegments);
+        }
+
+        /// <summary>
         /// Gets cache statistics
         /// </summary>
         public DataSourceStats GetStats()
