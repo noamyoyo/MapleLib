@@ -47,6 +47,7 @@ namespace MapleLib.Img
 
         private readonly ReaderWriterLockSlim _cacheLock = new();
         private readonly LRUCache<string, WzImage> _imageCache;
+        private readonly object[] _loadGates = Enumerable.Range(0, 64).Select(_ => new object()).ToArray();   // striped per-key locks for LoadImage
 
         /// <summary>
         /// The full path each image was loaded from (or created at). save_image writes back to exactly this path: the
@@ -338,21 +339,39 @@ namespace MapleLib.Img
                 return cachedImage;
             }
 
-            Interlocked.Increment(ref _cacheMisses);
-
-            if (!File.Exists(fullPath))
-                return null;
-
-            // Load the image
-            WzImage image = LoadImageFromFile(fullPath, Path.GetFileName(relativePath));
-            if (image != null)
+            // Miss, load and add happen under one lock per key (striped), and the cache is checked again once the lock
+            // is held: two threads must not both load the file and let the second Add replace an image the first
+            // caller may already have edited.
+            lock (_loadGates[(uint)StringComparer.Ordinal.GetHashCode(cacheKey) % (uint)_loadGates.Length])
             {
-                // Remember where it came from, then add to the LRU cache (will auto-evict if over capacity)
-                _loadedPaths.AddOrUpdate(image, fullPath);
-                _imageCache.Add(cacheKey, image);
-            }
+                if (_imageCache.TryGet(cacheKey, out cachedImage))
+                {
+                    Interlocked.Increment(ref _cacheHits);
+                    return cachedImage;
+                }
 
-            return image;
+                Interlocked.Increment(ref _cacheMisses);
+
+                if (!File.Exists(fullPath))
+                    return null;
+
+                // Load the image
+                WzImage image = LoadImageFromFile(fullPath, Path.GetFileName(relativePath));
+                if (image != null)
+                {
+                    // Remember where it came from, then add to the LRU cache (will auto-evict if over capacity).
+                    // If the cache kept a different, pinned image for this key, that one wins.
+                    _loadedPaths.AddOrUpdate(image, fullPath);
+                    var held = _imageCache.Add(cacheKey, image);
+                    if (!ReferenceEquals(held, image))
+                    {
+                        image.Dispose();
+                        image = held;
+                    }
+                }
+
+                return image;
+            }
         }
 
         /// <summary>
@@ -666,7 +685,15 @@ namespace MapleLib.Img
 
             bool saved = SaveImageCore(image, path, allowCreateDirectory: false);
             if (saved && evictFromCache)
-                RemoveFromCache(image);
+            {
+                // An image edited again while it was being saved is still pinned (Changed) and stays cached, so the
+                // newer edit is not orphaned; RemoveUnpinned leaves it alone.
+                foreach (var item in _imageCache.GetAllItems())
+                {
+                    if (ReferenceEquals(item.Value, image))
+                        _imageCache.RemoveUnpinned(item.Key);
+                }
+            }
             return saved;
         }
 
@@ -680,6 +707,9 @@ namespace MapleLib.Img
         {
             return SaveImageCore(image, filePath, allowCreateDirectory: true);
         }
+
+        /// <summary>Test seam: runs after the image was serialized and before the file is replaced.</summary>
+        internal Action<WzImage> AfterSerializeForTests;
 
         private bool SaveImageCore(WzImage image, string filePath, bool allowCreateDirectory)
         {
@@ -710,6 +740,9 @@ namespace MapleLib.Img
                 // until serialization has completed successfully.
                 tmpPath = $"{filePath}.{Guid.NewGuid():N}.tmp";
 
+                // Taken before serializing: an edit made while the file is written must keep the image marked changed.
+                int changeVersion = image.ChangeVersion;
+
                 using (FileStream fs = File.Open(tmpPath, FileMode.CreateNew))
                 {
                     using (WzBinaryWriter writer = new WzBinaryWriter(fs, _wzIv))
@@ -717,6 +750,8 @@ namespace MapleLib.Img
                         image.SaveImage(writer, true);
                     }
                 }
+
+                AfterSerializeForTests?.Invoke(image);
 
                 FileReplacement.ReplaceWithBackup(tmpPath, filePath, backupPath);
                 tmpPath = null;
@@ -728,7 +763,7 @@ namespace MapleLib.Img
                     _imageCache.Add(cacheKey, image);
                 }
 
-                image.Changed = false;
+                image.TryClearChanged(changeVersion);
                 return true;
             }
             catch (Exception ex)

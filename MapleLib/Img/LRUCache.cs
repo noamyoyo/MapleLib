@@ -192,25 +192,26 @@ namespace MapleLib.Img
         }
 
         /// <summary>
-        /// Adds or updates a value in the cache
+        /// Adds or updates a value in the cache. An existing pinned entry is never replaced by a different object.
+        /// Returns the value the cache holds for the key afterwards: <paramref name="value"/>, or the pinned entry that was kept.
         /// </summary>
-        public void Add(TKey key, TValue value)
+        public TValue Add(TKey key, TValue value)
         {
             ThrowIfDisposed();
             if (value == null)
-                return;
+                return value;
 
             long itemSize = _sizeEstimator?.Invoke(value) ?? 1;
             if (itemSize < 0)
                 throw new ArgumentOutOfRangeException(nameof(value), "The size estimator cannot return a negative size.");
             if (itemSize > _maxSizeBytes)
-                return;
+                return value;
 
             _lock.EnterWriteLock();
             try
             {
                 ThrowIfDisposed();
-                AddCore(key, value, itemSize);
+                return AddCore(key, value, itemSize);
             }
             finally
             {
@@ -229,6 +230,31 @@ namespace MapleLib.Img
             {
                 ThrowIfDisposed();
                 if (_cache.TryGetValue(key, out var node))
+                {
+                    _currentSize -= node.Value.Size;
+                    _lruList.Remove(node);
+                    _cache.Remove(key);
+                    return true;
+                }
+                return false;
+            }
+            finally
+            {
+                _lock.ExitWriteLock();
+            }
+        }
+
+        /// <summary>
+        /// Removes a key unless its value is pinned (see the constructor). Returns true when it was removed.
+        /// </summary>
+        public bool RemoveUnpinned(TKey key)
+        {
+            ThrowIfDisposed();
+            _lock.EnterWriteLock();
+            try
+            {
+                ThrowIfDisposed();
+                if (_cache.TryGetValue(key, out var node) && !(_isPinned != null && _isPinned(node.Value.Value)))
                 {
                     _currentSize -= node.Value.Size;
                     _lruList.Remove(node);
@@ -418,17 +444,19 @@ namespace MapleLib.Img
             return false;
         }
 
-        private void AddCore(TKey key, TValue value, long? estimatedSize = null)
+        private TValue AddCore(TKey key, TValue value, long? estimatedSize = null)
         {
             long itemSize = estimatedSize ?? (_sizeEstimator?.Invoke(value) ?? 1);
             if (itemSize < 0)
                 throw new ArgumentOutOfRangeException(nameof(value), "The size estimator cannot return a negative size.");
             if (itemSize > _maxSizeBytes)
-                return;
+                return value;
 
-            // Remove existing if present.
+            // Remove existing if present, except a pinned entry that is a different object (it may carry unsaved edits).
             if (_cache.TryGetValue(key, out var existingNode))
             {
+                if (_isPinned != null && !ReferenceEquals(existingNode.Value.Value, value) && _isPinned(existingNode.Value.Value))
+                    return existingNode.Value.Value;
                 _currentSize -= existingNode.Value.Size;
                 _lruList.Remove(existingNode);
                 _cache.Remove(key);
@@ -451,6 +479,7 @@ namespace MapleLib.Img
             _lruList.AddFirst(node);
             _cache[key] = node;
             _currentSize = checked(_currentSize + itemSize);
+            return value;
         }
 
         private void ThrowIfDisposed()

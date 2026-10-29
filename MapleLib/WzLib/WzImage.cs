@@ -170,7 +170,34 @@ namespace MapleLib.WzLib
         /// <summary>
         /// Was the image changed
         /// </summary>
-        public bool Changed { get { return bIsImageChanged; } set { bIsImageChanged = value; } }
+        public bool Changed
+        {
+            get { return bIsImageChanged; }
+            set { lock (changeLock) { bIsImageChanged = value; if (value) changeVersion++; } }
+        }
+
+        private readonly object changeLock = new object();
+        private int changeVersion;
+
+        /// <summary>
+        /// Counts every time the image was marked changed. Read it before serializing the image, then call
+        /// <see cref="TryClearChanged"/> afterwards, so an edit made while the save was running is not forgotten.
+        /// </summary>
+        public int ChangeVersion { get { lock (changeLock) return changeVersion; } }
+
+        /// <summary>
+        /// Clears <see cref="Changed"/> only when the image was not marked changed again since <paramref name="version"/>
+        /// was read from <see cref="ChangeVersion"/>. Returns true when the flag was cleared (or was already clear).
+        /// </summary>
+        public bool TryClearChanged(int version)
+        {
+            lock (changeLock)
+            {
+                if (changeVersion != version) return false;
+                bIsImageChanged = false;
+                return true;
+            }
+        }
         /// <summary>
         /// The size in the wz file of the image
         /// </summary>
